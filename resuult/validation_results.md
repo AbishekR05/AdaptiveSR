@@ -91,11 +91,14 @@ A verification script generated 5 distinct synthetic frames representing differe
 - **Determinism**: Multiple identical invocations on the same frame yielded exactly matching float values (Run 1: `0.150358`, Run 2: `0.150358`), confirming pure functions without side effects.
 - **Stability**: Adjacent frame testing with camera drift (1px shift) showed a negligible score variance ($|c_t - c_{t-1}| = 0.0001 < 0.05$), ensuring the signal will not cause flickering model selections.
 - **Edge Case Processing**: Passing `prev_frame=None` on initial frame execution returned exactly `motion=0.0` rather than causing numeric exceptions or crashes.
-- **Motion Sensitivity (Translation Scaling)**: Evaluated dynamic motion response using shape translations on a base frame:
+- **Motion Sensitivity (Translation Scaling & Limitations)**: Evaluated dynamic motion response using shape translations on a base frame:
   - *Small translation (5px shift)*: **`0.0078`**
   - *Medium translation (30px shift)*: **`0.0468`**
   - *Large translation (120px shift)*: **`0.1872`**
-  This confirms that motion scales proportionally with translation distance ($0.0 < 0.0078 < 0.0468 < 0.1872 \le 1.0$) and successfully maps moving objects without clipping.
+  This confirms that motion scales proportionally with translation distance ($0.0 < 0.0078 < 0.0468 < 0.1872 \le 1.0$) and successfully maps moving objects.
+  > [!NOTE]
+  > **Validation Limitation**: The translation test represents localized object movement in an otherwise static shot. Under a full-frame camera pan or global motion, the pixel diff mean will be much higher, meaning `MOTION_SCALE_FACTOR = 4.0` may saturate the motion score to 1.0 very quickly. This calibration choice should be stress-tested and adjusted against real video footage during the Phase 7 benchmarking harness.
+
 
 ## Design Decision
 - **Inference Sampling Strategy**: Full **per-frame analysis** is selected for v1. This preserves responsiveness to sudden cuts or face entries. Compute overhead is low compared to upcoming neural VSR model inference.
