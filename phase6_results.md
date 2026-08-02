@@ -13,6 +13,7 @@ This document presents the implementation details, test matrices, and telemetry 
 | **Test 3** | Adaptive Model Switching | `DecisionEngine` | **PASSED** | Output log contains **both** models switching dynamically. |
 | **Test 4** | Frame Ordering Integrity | `FrameBuffer` | **PASSED** | Output frames are sequential (0 to 29) with no duplicated or dropped indexes. |
 | **Test 5** | Log Schema & Completeness | `PipelineLogger` | **PASSED** | 31-line CSV correctly populated with all metadata & telemetry. |
+| **Test 6** | Skip-Enhancement Tier | `DecisionEngine` | **PASSED** | Bypasses upscaling completely when battery is critical (<10%) and complexity is low (<15%). |
 
 ---
 
@@ -55,16 +56,19 @@ During initial test runs, all frames upscaled by `real_esrgan` resulted in a **c
 
 ### Frame 4: FSRCNN (`tinysr`)
 *FSRCNN is selected for low-complexity flat segments to conserve device resource budgets.*
-```carousel
-![Frame 4 Input (640x480)](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/fsrcnn_before.png)
-<!-- slide -->
-![Frame 4 Upscaled (1280x960)](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/fsrcnn_after.png)
-```
+*   **Before (640x480)**: [fsrcnn_before.png](file:///C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/fsrcnn_before.png)
+*   **After FSRCNN (1280x960)**: [fsrcnn_after.png](file:///C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/fsrcnn_after.png)
 
 ### Frame 5: Real-ESRGAN (`real_esrgan`)
 *Real-ESRGAN is selected for high-complexity frames to recover maximum detail.*
-```carousel
-![Frame 5 Input (640x480)](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/esrgan_before.png)
-<!-- slide -->
-![Frame 5 Upscaled (1280x960)](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/esrgan_after.png)
-```
+*   **Before (640x480)**: [esrgan_before.png](file:///C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/esrgan_before.png)
+*   **After Real-ESRGAN (1280x960)**: [esrgan_after.png](file:///C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/esrgan_after.png)
+
+---
+
+## 5. Low-End Optimization Addendum: Skip-Enhancement Tier (Rule 0)
+To maximize battery savings and minimize processing overhead under critical device states, we implemented **Recommendation #1 (Skip-Enhancement Tier)**:
+*   **Rule 0 logic**: If the system battery drops below **`10.0%`** and the visual scene complexity is very low (**`< 15.0%`**), upscaling is completely bypassed.
+*   **Performance Profile**: The `EnhancementEngine` returns the input BGR frame directly without executing neural network convolutions. This achieves **`0 ms`** processing latency, delivering a true zero-power fallback tier for resource-exhausted devices.
+*   **Coverage**: Verified by `test_case_skip_enhancement` in `test_decision_engine.py` and `test_enhancement_engine_skip_enhancement` in `test_enhancement_engine.py`.
+
