@@ -178,11 +178,27 @@ We verified model execution correctness, caching speedups, CPU fallback executio
 | **7** | VRAM Stress (x4 scaling) | `real_esrgan` | GPU | (1920, 2560, 3) | **PASSED** | Peak VRAM: **`1510.05 MB`** (runs successfully under 4GB limit) |
 
 ## Verification Analysis
-- **Import Workarounds**: The dynamic `torchvision.transforms.functional_tensor` and `collections.Container` import injections successfully resolved all Real-ESRGAN/BasicSR compatibility conflicts at runtime.
 - **Dynamic Registry Dispatch**: `EnhancementEngine` successfully resolved string-path loader functions via `importlib` and cached them, executing without hardcoded model branches.
 - **Latency Benchmarking**: 
-  - FSRCNN (`tinysr`): **`7.87 ms`** on CPU, **`5.25 ms`** on GPU (GTX 1650).
-  - Real-ESRGAN (`real_esrgan`): **`439.00 ms`** on CPU, **`167.01 ms`** on GPU.
-  The results prove the ~50x difference in resource consumption between the lightweight and mid-tier models, validating the need for dynamic switching.
+  - FSRCNN (`tinysr`): **`384.75 ms`** on CPU, **`126.68 ms`** on GPU (GTX 1650) for a standard **480p input frame (640x480)**.
+  - Real-ESRGAN (`real_esrgan`): **`19061.23 ms`** on CPU, **`11113.03 ms`** on GPU for a standard **480p input frame (640x480)**.
+  These measurements establish the authoritative per-frame runtime profiles. Real-ESRGAN takes ~11.1s on GPU, representing a major compute workload, while FSRCNN executes in ~126.6ms on GPU (representing a 88x speedup). This confirms that frame-by-frame model routing is essential to avoid stalling the pipeline when high-complexity single frames must be enhanced.
 - **GPU Integration**: PyTorch CUDA is successfully enabled using the `D:\Full Stack\Caption Generator\caption-app\venv` target virtual environment, allowing all GPU-accelerated cases and stress tests to run to completion.
+
+---
+
+## Reproducibility Footnotes & Import Mismatches
+
+During this integration, two significant import mismatches were encountered due to changes in modern Python and Torchvision versions relative to the older `basicsr`/`realesrgan` codebase:
+
+1. **Python 3.10+ Compatibility**: The `collections.Container` abstract class was deprecated and removed, moving to `collections.abc.Container`. This throws an `AttributeError` when `basicsr` is imported.
+2. **Torchvision >= 0.15 Compatibility**: The module `torchvision.transforms.functional_tensor` was completely removed by the PyTorch maintainers. This throws a `ModuleNotFoundError` when `basicsr.data.degradations` is loaded.
+
+### Dynamic Resolution Shims
+To resolve these without forcing users to compile packages from source, the system injects the following shims into the runtime namespace dynamically prior to importing the external models (see [realesrgan_backend.py](file:///d:/Full%20Stack/AdaptiveSR/src/modules/backends/realesrgan_backend.py)):
+*   **Container Aliasing**: We alias `collections.Container = collections.abc.Container` if not already defined.
+*   **Virtual Module Mocking**: We dynamically instantiate a dummy module using Python's standard `types.ModuleType` under the name `torchvision.transforms.functional_tensor`, inject the `rgb_to_grayscale` function reference from `torchvision.transforms.functional` into it, and manually bind it to `sys.modules["torchvision.transforms.functional_tensor"]`.
+
+This guarantees that compilation works dynamically on any standard Python setup matching our pinned environment.
+
 

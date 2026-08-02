@@ -8,9 +8,9 @@ from src.modules.backends.realesrgan_backend import infer as realesrgan_infer
 def main():
     print("=== Phase 5a Validation: Model Latency Benchmarking ===")
     
-    # Generate 64x64 input frame
-    frame = np.zeros((64, 64, 3), dtype=np.uint8)
-    cv2.rectangle(frame, (16, 16), (48, 48), (255, 0, 0), -1)
+    # Generate 640x480 input frame (target 480p resolution)
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (100, 100), (540, 380), (255, 0, 0), -1)
     
     devices = ["cpu"]
     if torch.cuda.is_available():
@@ -46,7 +46,7 @@ def main():
         avg_realesrgan = (time.perf_counter() - t0) / runs
         results[device]["real_esrgan"] = avg_realesrgan * 1000.0  # ms
         
-    print("\nMeasured Model Latencies (64x64 frame, scale=2):")
+    print("\nMeasured Model Latencies (640x480 frame, scale=2):")
     print(f"{'Model':<12} | {'Device':<6} | {'Avg Latency (ms)':<16}")
     print("-" * 42)
     for device in devices:
