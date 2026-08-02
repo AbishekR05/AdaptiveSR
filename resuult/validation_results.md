@@ -20,7 +20,7 @@ This document logs the benchmarking and verification results of the Phase 1 pass
 | **CPU Utilization**          | ~0.0% (Fast execution, CPU load minimal)                   |
 | **RAM Utilization**          | ~94.5%                                                     |
 | **Battery Percentage**       | 97.0%                                                      |
-| **GPU Utilization**          | N/A (GPU monitoring disabled/no nvidia NVML driver active) |
+| **GPU Utilization**          | Active (NVIDIA GeForce GTX 1650 monitored via `pynvml`)     |
 | **Avg. Frame Write Latency** | ~1.44 ms / frame                                           |
 
 ## Conclusion
