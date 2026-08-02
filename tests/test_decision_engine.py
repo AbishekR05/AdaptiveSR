@@ -95,3 +95,15 @@ def test_case_9_all_fields_none(engine):
     decision = engine.decide(dev, scene)
     assert decision.model == "real_esrgan"
     assert "default" in decision.reason
+
+def test_case_skip_enhancement(engine):
+    # Scenario: Critical battery + low complexity (Rule 0)
+    dev = DeviceState(cpu=0.20, gpu=None, ram=0.50, system_ram=0.50, battery=0.08, charging=False, temperature=0.30, fps=30.0)
+    scene = SceneDescriptor(motion=0.0, texture=0.10, edges=0.10, blur_clarity=0.10, complexity=0.12)
+    
+    decision = engine.decide(dev, scene)
+    assert decision.model == "skip"
+    assert decision.scale == 1
+    assert "critical battery" in decision.reason
+    assert "trivial frame" in decision.reason
+

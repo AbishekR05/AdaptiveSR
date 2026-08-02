@@ -31,6 +31,8 @@ class EnhancementEngine:
         return infer_fn
 
     def enhance(self, frame_bgr, decision: Decision, frame_window: list | None = None):
+        if decision.model == "skip":
+            return frame_bgr
         entry = MODEL_REGISTRY[decision.model]
         infer_fn = self._resolve(decision.model)
         if entry.get("requires_sequence", False):

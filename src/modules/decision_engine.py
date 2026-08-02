@@ -15,6 +15,17 @@ class DecisionEngine:
     def decide(self, device: DeviceState, scene: SceneDescriptor) -> Decision:
         t = self.thresholds
 
+        # Rule 0: Critical battery + simple frame -> skip enhancement completely to save power (passthrough)
+        t_skip = t.get("skip_enhancement", {"battery": 0.10, "temperature": 0.85, "complexity": 0.15})
+        if (device.battery is not None and device.battery < t_skip["battery"]) and \
+           (scene.complexity < t_skip["complexity"]):
+            return Decision(
+                model="skip",
+                scale=1,
+                reason=f"critical battery ({device.battery:.2f} < {t_skip['battery']}) + trivial frame ({scene.complexity:.2f} < {t_skip['complexity']}), passthrough",
+                priority="high"
+            )
+
         # Rule 1: Critical device state -> always lightweight, regardless of scene
         if (device.battery is not None and device.battery < t["low_battery"]) and \
            (device.temperature is not None and device.temperature > t["high_temp"]):

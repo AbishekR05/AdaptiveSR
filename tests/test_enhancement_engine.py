@@ -132,3 +132,15 @@ def test_vram_stress_check():
     assert out_enhanced.shape == (1920, 2560, 3)
     assert peak_vram_mb < 4096.0  # Must not exceed 4GB VRAM
     cv2.imwrite("test_outputs/realesrgan_x4_stress.png", out_enhanced)
+
+def test_enhancement_engine_skip_enhancement(sample_frame):
+    device = get_inference_device()
+    engine = EnhancementEngine(device)
+    
+    dec_skip = Decision(model="skip", scale=1, reason="critical battery + low complexity")
+    out_skip = engine.enhance(sample_frame, dec_skip)
+    
+    # Assert it returns the exact same array (reference or exact copy) without resizing/upscaling
+    assert np.array_equal(out_skip, sample_frame)
+    assert out_skip.shape == sample_frame.shape
+
