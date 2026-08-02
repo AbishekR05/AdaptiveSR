@@ -1,0 +1,8 @@
+thresholds:
+  low_battery: 0.20
+  high_temp: 0.75 # normalized; calibrate against real sensor range
+  low_complexity: 0.25
+  high_complexity: 0.75
+  very_high_complexity: 0.90
+  cpu_headroom: 0.60
+  gpu_headroom: 0.80

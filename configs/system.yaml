@@ -1,0 +1,7 @@
+system:
+  device_monitor:
+    poll_interval: 0.5
+  logging:
+    level: "INFO"
+    log_dir: "logs"
+    csv_sink: "logs/metrics.csv"

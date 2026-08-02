@@ -1,0 +1,16 @@
+models:
+  tinysr:
+    name: "TinySR"
+    type: "fsrcnn"
+    scale: 2
+    weights: "models/tinysr/fsrcnn_x2.pth"
+  realesrgan:
+    name: "Real-ESRGAN"
+    type: "realesrgan"
+    scale: 2
+    weights: "models/realesrgan/RealESRGAN_x2plus.pth"
+  basicvsr:
+    name: "BasicVSR++"
+    type: "basicvsr"
+    scale: 2
+    weights: "models/basicvsr/basicvsr_plusplus_x2.pth"
