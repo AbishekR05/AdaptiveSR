@@ -149,4 +149,51 @@ def test_complete_pipeline_run(short_dummy_video_path, tmp_path):
         assert row[2] in ["tinysr", "real_esrgan"]
         assert float(row[9]) >= 0.0  # inference_time_ms is populated
 
+def test_pipeline_force_model(short_dummy_video_path, tmp_path):
+    output_path = str(tmp_path / "forced_output.mp4")
+    log_path = str(tmp_path / "forced_run.csv")
+    
+    from src.main import run_pipeline
+    import csv
+    
+    # Run pipeline with force_model="tinysr"
+    run_pipeline(
+        input_path=short_dummy_video_path,
+        output_path=output_path,
+        config_path="configs/decision_config.yaml",
+        log_path=log_path,
+        poll_interval=0.1,
+        force_model="tinysr"
+    )
+    
+    assert os.path.exists(output_path)
+    assert os.path.exists(log_path)
+    
+    with open(log_path, "r", encoding="utf-8") as f:
+        reader = list(csv.reader(f))
+        
+    # Check that model is forced to tinysr for all 5 frames
+    for row in reader[1:]:
+        assert row[2] == "tinysr"
+        assert "forced baseline model" in row[10]
+
+def test_pipeline_ablation():
+    from src.modules.decision_engine import DecisionEngine
+    from src.utils.state_types import DeviceState, SceneDescriptor
+    
+    # Under low battery (0.05) and high temp (0.90) and high complexity (0.95), normal decision should be tinysr
+    dev = DeviceState(cpu=0.1, gpu=0.1, ram=0.5, system_ram=0.5, battery=0.05, charging=False, temperature=0.90, fps=30.0)
+    scene = SceneDescriptor(motion=0.0, texture=0.95, edges=0.95, blur_clarity=0.95, complexity=0.95)
+    
+    # 1. Normal behavior (forced tinysr due to device state constraint)
+    engine_normal = DecisionEngine(ignore_device=False)
+    dec_normal = engine_normal.decide(dev, scene)
+    assert dec_normal.model == "tinysr"
+    
+    # 2. Ablation: ignore_device is True (should ignore the low battery/temp state and decide real_esrgan based on high complexity)
+    engine_ablation = DecisionEngine(ignore_device=True)
+    dec_ablation = engine_ablation.decide(dev, scene)
+    assert dec_ablation.model == "real_esrgan"
+
+
 

@@ -3,7 +3,7 @@ import yaml
 from src.utils.state_types import DeviceState, SceneDescriptor, Decision
 
 class DecisionEngine:
-    def __init__(self, config_path="configs/decision_config.yaml"):
+    def __init__(self, config_path="configs/decision_config.yaml", ignore_device=False, ignore_scene=False):
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
             
@@ -11,8 +11,15 @@ class DecisionEngine:
             self.cfg = yaml.safe_load(f)
             
         self.thresholds = self.cfg["thresholds"]
+        self.ignore_device = ignore_device
+        self.ignore_scene = ignore_scene
 
     def decide(self, device: DeviceState, scene: SceneDescriptor) -> Decision:
+        if self.ignore_device:
+            device = DeviceState(cpu=0.10, gpu=0.10, ram=0.50, system_ram=0.50, battery=0.90, charging=True, temperature=0.30, fps=30.0)
+        if self.ignore_scene:
+            scene = SceneDescriptor(motion=0.0, texture=0.50, edges=0.50, blur_clarity=0.50, complexity=0.50)
+
         t = self.thresholds
 
         # Rule 0: Critical battery + simple frame -> skip enhancement completely to save power (passthrough)

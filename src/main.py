@@ -17,7 +17,7 @@ from src.utils.state_types import SceneDescriptor
 
 logger = logging.getLogger("AdaptiveSR.main")
 
-def run_pipeline(input_path, output_path, config_path="configs/decision_config.yaml", log_path=None, poll_interval=0.5):
+def run_pipeline(input_path, output_path, config_path="configs/decision_config.yaml", log_path=None, poll_interval=0.5, force_model=None):
     # 1. Setup metrics logger
     if log_path is None:
         os.makedirs("logs", exist_ok=True)
@@ -74,7 +74,11 @@ def run_pipeline(input_path, output_path, config_path="configs/decision_config.y
             device_monitor.update_fps(current_fps)
 
             # Decide model
-            decision = decision_engine.decide(device_state, scene_descriptor)
+            if force_model is not None:
+                from src.utils.state_types import Decision
+                decision = Decision(model=force_model, scale=2, reason=f"forced baseline model: {force_model}")
+            else:
+                decision = decision_engine.decide(device_state, scene_descriptor)
 
             # Enhance frame
             t_infer_start = time.time()
@@ -174,6 +178,12 @@ def parse_args():
         default=0.5,
         help="Device monitor polling interval in seconds"
     )
+    parser.add_argument(
+        "--force-model", "-f",
+        default=None,
+        choices=["tinysr", "real_esrgan", "skip"],
+        help="Forcibly run a static model for benchmarking"
+    )
     return parser.parse_args()
 
 def main():
@@ -184,7 +194,8 @@ def main():
         output_path=args.output,
         config_path=args.config,
         log_path=args.log,
-        poll_interval=args.poll_interval
+        poll_interval=args.poll_interval,
+        force_model=args.force_model
     )
 
 if __name__ == "__main__":
