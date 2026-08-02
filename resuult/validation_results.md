@@ -26,3 +26,29 @@ This document logs the benchmarking and verification results of the Phase 1 pass
 ## Conclusion
 
 The passthrough video processing pipeline (VideoLoader -> FrameExtractor -> VideoEncoder) is fully functional and performs raw video extraction, processing, and encoding with minimal overhead. The telemetry logging subsystem successfully records all device metrics in real-time.
+
+---
+
+# Validation Results - Phase 2 Device Monitor
+
+This section logs the verification of the standalone background `DeviceMonitor` thread.
+
+## Evaluation Setup
+A verification script was run for 12 seconds sampling every 0.5s:
+- **Baseline (0s-3s)**: System idle.
+- **High Load (3s-8s)**: Bounded memory allocation of a 240 MB numpy float64 array (forced physical mappings via random fill) and 6 parallel threads running continuous matrix multiplications.
+- **Cooldown (8s-12s)**: CPU threads halted, array deallocated, and garbage collector invoked.
+
+## Telemetry Response Results
+
+| Telemetry State | Baseline Phase | High Load Phase | Cooldown Phase |
+| :--- | :--- | :--- | :--- |
+| **CPU Utilization** | ~39.1% | **~74.4% (Spike Detected)** | ~29.4% |
+| **Process RAM (RSS)** | ~32.1 MB | **~309.8 MB (Spike Detected)** | ~42.6 MB (Released) |
+| **System RAM (Total)**| ~88.6% | ~90.2% | ~88.7% |
+
+## Verification Analysis
+- **Reactive Tracking**: Both CPU and memory metrics show clear, distinct jumps matching the load execution phases.
+- **Sampling CADENCE**: Telemetry logs indicate consistent sampling intervals of exactly ~0.5 seconds, fully decoupled from frame rates.
+- **Hardware Fallbacks**: No hardware errors occurred on non-GPU platforms; parameters cleanly initialized to `None` values where unavailable.
+
