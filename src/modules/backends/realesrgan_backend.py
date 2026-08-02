@@ -75,12 +75,14 @@ def load_model(device: str, scale: int = 2) -> RealESRGANer:
         scale=scale,
         model_path=weights_path,
         model=model,
-        tile=400,
+        tile=0,           # Disabled tiling (tile=0) to run in a single forward pass for speed
         tile_pad=10,
         pre_pad=0,
         half=half_precision,
         device=device
     )
+
+    print(f"Real-ESRGAN {model_name} initialized. Model device parameter: {next(upsampler.model.parameters()).device}")
 
     _model_cache[cache_key] = upsampler
     return upsampler

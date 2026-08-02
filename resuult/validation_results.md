@@ -171,19 +171,19 @@ We verified model execution correctness, caching speedups, CPU fallback executio
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | Smoke Test FSRCNN | `tinysr` | CPU/GPU | (128, 128, 3) | **PASSED** | Output image successfully saved |
 | **2** | Smoke Test Real-ESRGAN | `real_esrgan` | CPU/GPU | (128, 128, 3) | **PASSED** | Output image successfully saved |
-| **3** | Caching FSRCNN | `tinysr` | GPU | (128, 128, 3) | **PASSED** | Run 1: `51.5 ms` $\rightarrow$ Run 2: **`4.6 ms`** (11.2x speedup) |
-| **4** | Caching Real-ESRGAN | `real_esrgan` | GPU | (128, 128, 3) | **PASSED** | Run 1: `954.6 ms` $\rightarrow$ Run 2: **`201.7 ms`** (4.7x speedup) |
+| **3** | Caching FSRCNN | `tinysr` | GPU | (128, 128, 3) | **PASSED** | Run 1: `44.4 ms` $\rightarrow$ Run 2: **`4.1 ms`** (10.8x speedup) |
+| **4** | Caching Real-ESRGAN | `real_esrgan` | GPU | (128, 128, 3) | **PASSED** | Run 1: `1015.7 ms` $\rightarrow$ Run 2: **`164.9 ms`** (6.2x speedup) |
 | **5** | CPU vs GPU Dispatch | `tinysr` | Both | (128, 128, 3) | **PASSED** | Ran on CPU and CUDA GPU explicitly |
 | **6** | EnhancementEngine Routing | Both | GPU | (128, 128, 3) | **PASSED** | Succeeded using `Decision` parameters |
-| **7** | VRAM Stress (x4 scaling) | `real_esrgan` | GPU | (1920, 2560, 3) | **PASSED** | Peak VRAM: **`1510.05 MB`** (runs successfully under 4GB limit) |
+| **7** | VRAM Stress (x4 scaling) | `real_esrgan` | GPU | (1920, 2560, 3) | **PASSED** | Peak VRAM: **`2653.55 MB`** (single-pass, no tiling, 2.3x faster at 36.3s) |
 
 ## Verification Analysis
 - **Dynamic Registry Dispatch**: `EnhancementEngine` successfully resolved string-path loader functions via `importlib` and cached them, executing without hardcoded model branches.
 - **Latency Benchmarking**: 
-  - FSRCNN (`tinysr`): **`384.75 ms`** on CPU, **`126.68 ms`** on GPU (GTX 1650) for a standard **480p input frame (640x480)**.
-  - Real-ESRGAN (`real_esrgan`): **`19061.23 ms`** on CPU, **`11113.03 ms`** on GPU for a standard **480p input frame (640x480)**.
-  These measurements establish the authoritative per-frame runtime profiles. Real-ESRGAN takes ~11.1s on GPU, representing a major compute workload, while FSRCNN executes in ~126.6ms on GPU (representing a 88x speedup). This confirms that frame-by-frame model routing is essential to avoid stalling the pipeline when high-complexity single frames must be enhanced.
-- **GPU Integration**: PyTorch CUDA is successfully enabled using the `D:\Full Stack\Caption Generator\caption-app\venv` target virtual environment, allowing all GPU-accelerated cases and stress tests to run to completion.
+  - FSRCNN (`tinysr`): **`402.52 ms`** on CPU, **`118.33 ms`** on GPU (GTX 1650) for a standard **480p input frame (640x480)**.
+  - Real-ESRGAN (`real_esrgan`): **`18075.11 ms`** on CPU, **`8916.36 ms`** on GPU for a standard **480p input frame (640x480)**.
+  These measurements establish the authoritative per-frame runtime profiles. Real-ESRGAN takes ~8.9s on GPU, representing a major compute workload, while FSRCNN executes in ~118.3ms on GPU (representing a 75x speedup). This confirms that frame-by-frame model routing is essential to avoid stalling the pipeline when high-complexity single frames must be enhanced.
+- **GPU Integration**: PyTorch CUDA is successfully enabled using the `D:\Full Stack\Caption Generator\caption-app\venv` target virtual environment, allowing all GPU-accelerated cases and stress tests to run to completion. Disabling tiling (`tile=0`) reduced the 480p scaling latency by 2.2 seconds (20% speedup) and allowed the 4x upscale stress test to execute 2.3x faster (36.3s vs 82.3s) without exceeding your 4GB card memory limits (peak VRAM: 2653.55 MB).
 
 ---
 
