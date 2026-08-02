@@ -201,4 +201,34 @@ To resolve these without forcing users to compile packages from source, the syst
 
 This guarantees that compilation works dynamically on any standard Python setup matching our pinned environment.
 
+---
+
+# Validation Results - Phase 5b BasicVSR++ Sequence Integration & Fallback Plan
+
+This section documents our standalone dependency installation test of the OpenMMLab (`mmcv` / `mmagic`) stack, the compilation failure points encountered on Windows, and our implementation of the designed-for-extensibility sequence dispatch and fallback interfaces.
+
+## 1. Standalone Dependency Check & Failure Log (Test 1)
+As specified by Section 2, we attempted to install OpenMMLab dependencies inside an isolated virtual environment (`test_mmagic_env`) with your CUDA PyTorch (`2.7.1+cu118`).
+*   **Command**: `test_mmagic_env\Scripts\python.exe -m mim install mmcv --no-build-isolation`
+*   **Result**: **FAILED**
+*   **Reasoning / Failure Points**:
+    1.  **CUDA Mismatch**: OpenMMLab's package registry (MIM) has no prebuilt `mmcv` wheels matching PyTorch version `2.7.1` (which is a pre-release version). This forced the build tool to download the source tarball (`mmcv-2.2.0.tar.gz`) and attempt a C++ compilation from source.
+    2.  **Missing C++ Compiler**: Visual Studio's `cl.exe` C++ compiler is not configured in the system environment variables (`UserWarning: Error checking compiler version for cl: [WinError 2] The system cannot find the file specified`).
+    3.  **CUDA Compatibility Lock**: The local CUDA compilation driver (`nvcc`) version is **`12.1`**, while the target virtual environment's pre-compiled PyTorch package was built against CUDA **`11.8`**. PyTorch's build extension raised a hard `RuntimeError` due to this version mismatch, aborting the build:
+        ```
+        RuntimeError: The detected CUDA version (12.1) mismatches the version that was used to compile PyTorch (11.8). Please make sure to use the same CUDA versions.
+        ```
+
+## 2. Strategic Fallback Implementation
+Following Section 6, rather than risking destabilizing the working Phase 5a environment (`D:\Full Stack\Caption Generator\caption-app\venv`) or spending days resolving Windows build chain and compiler paths, we deferred native BasicVSR++ execution and implemented the framework's **sequence-dispatch interface** to ensure extensibility:
+
+1.  **Registry Extensibility**: Kept the `basicvsr++` entry in [model_registry.py](file:///d:/Full%20Stack/AdaptiveSR/src/modules/model_registry.py#L24-L37) with `"available": False` and `"requires_sequence": True` to demonstrate design completeness.
+2.  **Sequence Dispatch & Fallback (Test 4)**: Implemented the dynamic `enhance` sequence-checking code and the `_fallback_single_frame` routing mechanism inside [enhancement_engine.py](file:///d:/Full%20Stack/AdaptiveSR/src/modules/enhancement_engine.py#L30-L53). If a sequence-requiring model is invoked with missing or partial context (e.g. at the start/end boundary of a video), the engine logs a warning and routes execution safely to `real_esrgan`.
+3.  **Skeleton Backend**: Created a placeholder [basicvsr_backend.py](file:///d:/Full%20Stack/AdaptiveSR/src/modules/backends/basicvsr_backend.py) that raises a descriptive `NotImplementedError` if loaded.
+4.  **Verification**: Verified boundary fallback behavior in the automated PyTest suite (`test_sequence_boundary_fallback` passed successfully).
+
+## 3. Thesis Paragraph (Project Framing)
+> "While the AdaptiveSR framework is architected to support sequence-based temporal models via a dynamic sequence-dispatch pipeline, full integration of the heavy BasicVSR++ recurrent video super-resolution model was deferred during validation. Standalone installation attempts inside isolated environments revealed build compatibility conflicts between the target pre-release PyTorch version (2.7.1) and prebuilt OpenMMLab (MMCV) binaries on Windows. Compiling MMCV from source failed due to a version mismatch between the system's local CUDA toolkit (12.1) and PyTorch's compilation toolkit (11.8), combined with the absence of MSVC C++ compilation tools in the system environment. To protect the integrity of the active production-ready pipeline, the framework ships with FSRCNN and Real-ESRGAN, while retaining a complete, validated sequence-dispatch and boundary fallback interface to support future temporal model integrations."
+
+
 

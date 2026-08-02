@@ -91,6 +91,23 @@ def test_enhancement_engine_dispatch(sample_frame):
     out_real = engine.enhance(sample_frame, dec_real)
     assert out_real.shape == (128, 128, 3)
 
+
+def test_sequence_boundary_fallback(sample_frame):
+    device = get_inference_device()
+    engine = EnhancementEngine(device)
+    
+    # Ask for basicvsr++ (requires_sequence: True) but pass frame_window=None
+    dec_vsr = Decision(model="basicvsr++", scale=2, reason="very high complexity")
+    
+    # It should log a warning and fall back to real_esrgan, outputting a 2x upscaled frame
+    out_fallback_none = engine.enhance(sample_frame, dec_vsr, frame_window=None)
+    assert out_fallback_none.shape == (128, 128, 3)
+    
+    # Ask for basicvsr++ but pass a short window (3 frames instead of 5)
+    short_window = [sample_frame, sample_frame, sample_frame]
+    out_fallback_short = engine.enhance(sample_frame, dec_vsr, frame_window=short_window)
+    assert out_fallback_short.shape == (128, 128, 3)
+
 def test_vram_stress_check():
     # Only run full 480p -> 4x upscale Real-ESRGAN test on GPU if available to verify VRAM limits and tiling
     if not torch.cuda.is_available():
