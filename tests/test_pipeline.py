@@ -89,3 +89,64 @@ def test_video_encoder(dummy_video_path, tmp_path):
     assert out_meta["width"] == meta["width"]
     assert out_meta["height"] == meta["height"]
     assert out_meta["frame_count"] == meta["frame_count"]
+
+@pytest.fixture
+def short_dummy_video_path(tmp_path):
+    video_file = tmp_path / "short_dummy.mp4"
+    width, height, fps, num_frames = 320, 240, 30, 5
+    
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(video_file), fourcc, fps, (width, height))
+    for i in range(num_frames):
+        # Draw a moving rectangle
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (i * 3, 50), (i * 3 + 40, 90), (0, 255, 0), -1)
+        out.write(frame)
+    out.release()
+    
+    return str(video_file)
+
+def test_complete_pipeline_run(short_dummy_video_path, tmp_path):
+    output_path = str(tmp_path / "enhanced_output.mp4")
+    log_path = str(tmp_path / "pipeline_run.csv")
+    
+    from src.main import run_pipeline
+    import csv
+    
+    # Run the complete pipeline
+    run_pipeline(
+        input_path=short_dummy_video_path,
+        output_path=output_path,
+        config_path="configs/decision_config.yaml",
+        log_path=log_path,
+        poll_interval=0.1
+    )
+    
+    # Verify the output video exists and is upscaled 2x
+    assert os.path.exists(output_path)
+    out_loader = VideoLoader(output_path)
+    out_meta = out_loader.get_metadata()
+    assert out_meta["width"] == 640   # 320 * 2
+    assert out_meta["height"] == 480  # 240 * 2
+    assert out_meta["frame_count"] == 5
+    
+    # Verify the CSV log file
+    assert os.path.exists(log_path)
+    with open(log_path, "r", encoding="utf-8") as f:
+        reader = list(csv.reader(f))
+        
+    # Check headers
+    assert reader[0] == [
+        "frame_no", "timestamp", "selected_model",
+        "complexity_score", "cpu", "gpu", "ram", "battery",
+        "temperature", "inference_time_ms", "decision_reason"
+    ]
+    # Check row count matches 5 frames + 1 header row
+    assert len(reader) == 6
+    
+    # Check that model name is logged in every row
+    for row in reader[1:]:
+        assert row[2] in ["tinysr", "real_esrgan"]
+        assert float(row[9]) >= 0.0  # inference_time_ms is populated
+
+

@@ -1,0 +1,14 @@
+thresholds:
+  low_battery: 0.20
+  high_temp: 0.75
+  low_complexity: 0.43     # Tuned to trigger tinysr on moderate/low complexity frames in input_test.mp4
+  high_complexity: 0.75
+  very_high_complexity: 0.90
+  cpu_headroom: 0.60
+  gpu_headroom: 0.80
+
+complexity_weights:
+  motion: 0.25
+  texture: 0.50
+  edges: 0.20
+  blur_clarity: 0.05

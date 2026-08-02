@@ -2,15 +2,151 @@ import os
 import argparse
 import time
 import logging
-from src.utils.logging_setup import setup_logging, MetricsLogger
+from src.utils.logging_setup import setup_logging
 from src.modules.video_loader import VideoLoader
 from src.modules.frame_extractor import FrameExtractor
 from src.modules.encoder import VideoEncoder
 from src.modules.device_monitor import DeviceMonitor
+from src.modules.decision_engine import DecisionEngine
+from src.modules.enhancement_engine import EnhancementEngine, get_inference_device
+from src.modules.frame_buffer import FrameBuffer
+from src.modules.pipeline_logger import PipelineLogger
+from src.modules.scene_analyzer import analyze_frame
+from src.modules.complexity_estimator import estimate_complexity
+from src.utils.state_types import SceneDescriptor
+
+logger = logging.getLogger("AdaptiveSR.main")
+
+def run_pipeline(input_path, output_path, config_path="configs/decision_config.yaml", log_path=None, poll_interval=0.5):
+    # 1. Setup metrics logger
+    if log_path is None:
+        os.makedirs("logs", exist_ok=True)
+        timestamp = int(time.time())
+        log_path = os.path.join("logs", f"run_{timestamp}.csv")
+        
+    pipeline_logger = PipelineLogger(log_path)
+    
+    # 2. Load original video
+    logger.info(f"Loading input video from: {input_path}")
+    loader = VideoLoader(input_path)
+    meta = loader.get_metadata()
+    logger.info(f"Video metadata: {meta['width']}x{meta['height']} @ {meta['fps']} FPS | Frames: {meta['frame_count']}")
+
+    # 3. Initialize components
+    device_monitor = DeviceMonitor(poll_interval=poll_interval)
+    device_monitor.start()
+
+    decision_engine = DecisionEngine(config_path)
+    enhancement_engine = EnhancementEngine(device=get_inference_device())
+    frame_buffer = FrameBuffer()
+
+    prev_frame = None
+    extractor = FrameExtractor(input_path)
+    
+    logger.info("Starting adaptive enhancement processing loop...")
+    start_time = time.time()
+    last_print_time = start_time
+    total_frames = meta["frame_count"]
+
+    encoder = None
+
+    try:
+        for idx, ts_ms, frame in extractor.extract():
+            t_frame_start = time.time()
+
+            # Analyze frame
+            scene_metrics = analyze_frame(frame, prev_frame)
+            complexity = estimate_complexity(scene_metrics)
+            scene_descriptor = SceneDescriptor(
+                motion=scene_metrics["motion"],
+                texture=scene_metrics["texture"],
+                edges=scene_metrics["edges"],
+                blur_clarity=scene_metrics["blur_clarity"],
+                complexity=complexity
+            )
+
+            # Get telemetry state
+            device_state = device_monitor.get_state()
+
+            # Update measured FPS in device monitor
+            elapsed = time.time() - start_time
+            current_fps = (idx + 1) / elapsed if elapsed > 0 else 0.0
+            device_monitor.update_fps(current_fps)
+
+            # Decide model
+            decision = decision_engine.decide(device_state, scene_descriptor)
+
+            # Enhance frame
+            t_infer_start = time.time()
+            enhanced_frame = enhancement_engine.enhance(frame, decision, frame_window=None)
+            inference_ms = (time.time() - t_infer_start) * 1000.0
+
+            # Store in buffer
+            frame_buffer.put(idx, enhanced_frame)
+
+            # Log frame statistics
+            pipeline_logger.log_row(
+                frame_no=idx,
+                timestamp=t_frame_start,
+                decision=decision,
+                scene=scene_descriptor,
+                device=device_state,
+                inference_ms=inference_ms
+            )
+
+            # Dynamically initialize the VideoEncoder using output shape of first frame
+            if encoder is None:
+                eh, ew, _ = enhanced_frame.shape
+                logger.info(f"Initializing VideoEncoder with upscaled dimensions: {ew}x{eh}")
+                encoder = VideoEncoder(
+                    original_input_path=input_path,
+                    output_path=output_path,
+                    width=ew,
+                    height=eh,
+                    fps=meta["fps"],
+                    has_audio=meta["has_audio"]
+                )
+
+            # Write frame
+            encoder.write_frame(enhanced_frame)
+
+            prev_frame = frame
+
+            # Periodic console reporting (every 2.0s)
+            now = time.time()
+            if now - last_print_time >= 2.0:
+                pct = (idx + 1) / total_frames * 100.0 if total_frames > 0 else 0.0
+                gpu_str = f"{device_state.gpu*100:.1f}%" if device_state.gpu is not None else "N/A"
+                logger.info(
+                    f"Frame {idx+1}/{total_frames} ({pct:.1f}%) | "
+                    f"Selected: {decision.model} | "
+                    f"Inf: {inference_ms:.1f} ms | "
+                    f"CPU: {device_state.cpu*100:.1f}% | "
+                    f"GPU: {gpu_str} | "
+                    f"RAM: {device_state.ram:.1f} MB"
+                )
+                last_print_time = now
+
+    except Exception as e:
+        logger.error(f"Error occurred during pipeline execution: {e}", exc_info=True)
+        raise
+
+    finally:
+        logger.info("Cleaning up pipeline threads and writers...")
+        device_monitor.stop()
+        pipeline_logger.close()
+        
+        if encoder is not None:
+            logger.info("Finalizing encoded output video...")
+            encoder.close()
+            
+        total_time = time.time() - start_time
+        logger.info(f"Pipeline processing complete in {total_time:.2f} seconds.")
+        logger.info(f"Per-frame logs saved to: {log_path}")
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Adaptive Resource- and Content-Aware Edge Video Super-Resolution Framework - Phase 1 Passthrough Validation"
+        description="Adaptive Resource- and Content-Aware Edge Video Super-Resolution Framework - Complete Pipeline Integration"
     )
     parser.add_argument(
         "--input", "-i",
@@ -23,6 +159,16 @@ def parse_args():
         help="Path to save the output video file"
     )
     parser.add_argument(
+        "--config", "-c",
+        default="configs/decision_config.yaml",
+        help="Path to decision engine yaml config file"
+    )
+    parser.add_argument(
+        "--log", "-l",
+        default=None,
+        help="Path to save the per-frame CSV logs"
+    )
+    parser.add_argument(
         "--poll-interval",
         type=float,
         default=0.5,
@@ -32,112 +178,14 @@ def parse_args():
 
 def main():
     args = parse_args()
-    
-    # 1. Setup standard logging
-    logger = setup_logging()
-    logger.info("Initializing AdaptiveSR Passthrough Pipeline...")
-    
-    # 2. Setup metrics CSV logging
-    metrics_csv_path = os.path.join("logs", "metrics.csv")
-    metrics_logger = MetricsLogger(filepath=metrics_csv_path)
-    
-    # 3. Load Video Metadata
-    try:
-        video_loader = VideoLoader(args.input)
-    except Exception as e:
-        logger.error(f"Failed to load input video: {e}")
-        return
-        
-    meta = video_loader.get_metadata()
-    
-    # 4. Start Device Monitor
-    monitor = DeviceMonitor(poll_interval=args.poll_interval)
-    monitor.start()
-    
-    # 5. Initialize Encoder
-    encoder = VideoEncoder(
-        original_input_path=args.input,
+    setup_logging()
+    run_pipeline(
+        input_path=args.input,
         output_path=args.output,
-        width=meta["width"],
-        height=meta["height"],
-        fps=meta["fps"],
-        has_audio=meta["has_audio"]
+        config_path=args.config,
+        log_path=args.log,
+        poll_interval=args.poll_interval
     )
-    
-    # 6. Process Frames
-    extractor = FrameExtractor(args.input)
-    
-    total_frames = meta["frame_count"]
-    logger.info("Starting frame processing...")
-    
-    start_time = time.time()
-    last_print_time = start_time
-    
-    try:
-        for idx, ts_ms, frame in extractor.extract():
-            frame_start = time.time()
-            
-            # For Phase 1 (Passthrough), write frame directly to encoder
-            encoder.write_frame(frame)
-            
-            frame_end = time.time()
-            frame_duration_ms = (frame_end - frame_start) * 1000.0
-            
-            # Fetch current device state
-            dev_state = monitor.get_state()
-            
-            # Update measured FPS in device monitor
-            elapsed = time.time() - start_time
-            current_fps = (idx + 1) / elapsed if elapsed > 0 else 0.0
-            monitor.update_fps(current_fps)
-            
-            # Log telemetry for this frame to CSV
-            metrics_logger.log_frame(
-                frame_no=idx,
-                selected_model="passthrough",
-                complexity=0.0,
-                cpu=dev_state.cpu,
-                gpu=dev_state.gpu,
-                ram=dev_state.ram,
-                system_ram=dev_state.system_ram,
-                battery=dev_state.battery,
-                temp=dev_state.temperature,
-                inference_ms=frame_duration_ms,
-                decision_reason="Passthrough pipeline validation"
-            )
-            
-            # Periodically print progress & device stats (every 2 seconds)
-            now = time.time()
-            if now - last_print_time >= 2.0:
-                pct = (idx + 1) / total_frames * 100.0 if total_frames > 0 else 0.0
-                gpu_str = f"{dev_state.gpu*100:.1f}%" if dev_state.gpu is not None else "N/A"
-                batt_str = f"{dev_state.battery*100:.1f}%" if dev_state.battery is not None else "N/A"
-                logger.info(
-                    f"Progress: {idx+1}/{total_frames} frames ({pct:.1f}%) | "
-                    f"Processing FPS: {current_fps:.2f} | "
-                    f"CPU: {dev_state.cpu*100:.1f}% | "
-                    f"GPU: {gpu_str} | "
-                    f"Proc RAM: {dev_state.ram:.1f} MB (Sys: {dev_state.system_ram*100:.1f}%) | "
-                    f"Battery: {batt_str}"
-                )
-                last_print_time = now
-                
-    except Exception as e:
-        logger.error(f"Error encountered during frame processing: {e}")
-        
-    finally:
-        # 7. Cleanup & finalize
-        logger.info("Closing video encoder...")
-        encoder.close()
-        
-        logger.info("Stopping device monitor...")
-        monitor.stop()
-        
-        metrics_logger.close()
-        
-        total_time = time.time() - start_time
-        logger.info(f"Pipeline finished in {total_time:.2f} seconds.")
-        logger.info(f"Telemetry metrics saved to: {metrics_csv_path}")
 
 if __name__ == "__main__":
     main()

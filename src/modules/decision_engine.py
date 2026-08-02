@@ -33,9 +33,11 @@ class DecisionEngine:
                 reason=f"low complexity ({scene.complexity:.2f} < {t['low_complexity']})"
             )
 
-        # Rule 3: Very high complexity + GPU headroom -> heaviest model
+        # Rule 3: Very high complexity + GPU headroom -> heaviest model (if available)
+        from src.modules.model_registry import MODEL_REGISTRY
         if (scene.complexity > t["very_high_complexity"]) and \
-           (device.gpu is not None and device.gpu < t["gpu_headroom"]):
+           (device.gpu is not None and device.gpu < t["gpu_headroom"]) and \
+           MODEL_REGISTRY.get("basicvsr++", {}).get("available", True):
             return Decision(
                 model="basicvsr++",
                 scale=2,

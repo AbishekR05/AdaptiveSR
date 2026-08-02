@@ -78,7 +78,7 @@ class VideoEncoder:
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", "copy",
-                "-c:a", "aac",
+                "-c:a", "copy",
                 "-shortest",
                 "-loglevel", "warning",
                 self.output_path

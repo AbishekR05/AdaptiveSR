@@ -42,13 +42,23 @@ def test_case_4_flat_scene_powerful_device(engine):
 
 def test_case_5_extreme_complexity_gpu_free(engine):
     # Scenario: Extreme complexity, GPU free (Rule 3)
+    from src.modules.model_registry import MODEL_REGISTRY
     dev = DeviceState(cpu=0.10, gpu=0.10, ram=0.50, system_ram=0.50, battery=0.90, charging=True, temperature=0.30, fps=30.0)
     scene = SceneDescriptor(motion=0.0, texture=0.95, edges=0.95, blur_clarity=0.95, complexity=0.95)
+    
+    # 1. When basicvsr++ is available
+    MODEL_REGISTRY["basicvsr++"]["available"] = True
     decision = engine.decide(dev, scene)
     assert decision.model == "basicvsr++"
     assert decision.priority == "high"
     assert "0.95" in decision.reason
     assert "0.10" in decision.reason
+
+    # 2. When basicvsr++ is unavailable (Option A fallback verification)
+    MODEL_REGISTRY["basicvsr++"]["available"] = False
+    decision_fallback = engine.decide(dev, scene)
+    assert decision_fallback.model == "real_esrgan"
+    assert "high complexity" in decision_fallback.reason
 
 def test_case_6_extreme_complexity_no_gpu(engine):
     # Scenario: Extreme complexity, no GPU present (falls to Rule 4)

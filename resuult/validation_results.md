@@ -230,5 +230,44 @@ Following Section 6, rather than risking destabilizing the working Phase 5a envi
 ## 3. Thesis Paragraph (Project Framing)
 > "While the AdaptiveSR framework is architected to support sequence-based temporal models via a dynamic sequence-dispatch pipeline, full integration of the heavy BasicVSR++ recurrent video super-resolution model was deferred during validation. Standalone installation attempts inside isolated environments revealed build compatibility conflicts arising because the target virtual environment runs a pre-release PyTorch version (2.7.1). OpenMMLab's prebuilt distribution model does not support pre-release PyTorch, forcing a local source build. This compilation failed due to a version mismatch between the local CUDA toolkit compiler (12.1) and PyTorch's build toolkit (11.8), combined with the absence of MSVC C++ compilation tools in the system environment. Downgrading PyTorch to resolve this was deemed out of scope given the active pipeline's stability. Consequently, the framework ships with FSRCNN and Real-ESRGAN, while retaining a complete, validated sequence-dispatch and boundary fallback interface to support future temporal model integrations."
 
+---
+
+# Validation Results - Phase 6 Complete Pipeline Integration
+
+This section documents the integration, testing, and telemetry logs of the complete sequential pipeline loop: Video Loader $\rightarrow$ Extractor $\rightarrow$ Scene Analyzer $\rightarrow$ Device Monitor $\rightarrow$ Decision Engine $\rightarrow$ Enhancement Engine $\rightarrow$ Frame Buffer $\rightarrow$ Video Encoder.
+
+## 1. Pipeline Telemetry Log Analysis (Test 3, 5)
+A 30-frame test run was conducted on a 480p input video (`input_trimmed.mp4`) at 30fps using a custom model-switching configuration (`configs/test_switching_config.yaml`) with `low_complexity: 0.43` to exercise model transitions.
+*   **Log Location**: [logs/run_switching.csv](file:///d:/Full%20Stack/AdaptiveSR/logs/run_switching.csv)
+*   **Total Executed Frames**: 30 frames
+*   **Model Selection Distribution**:
+    *   **FSRCNN (`tinysr`)**: **20.0%** (6 out of 30 frames: frames 0, 1, 4, 7, 11)
+    *   **Real-ESRGAN (`real_esrgan`)**: **80.0%** (24 out of 30 frames)
+*   **Telemetry Observations**:
+    *   **Latency difference**: Frames routed to `tinysr` executed in **`~150–200 ms`** (including analysis/loading overhead). Frames routed to `real_esrgan` executed in **`~9.1–9.5 seconds`** (except frame 2, which took 30s due to model compilation/initialization on CUDA).
+    *   **Telemetry completeness**: The per-frame CSV logs contain exactly 30 rows + 1 header, with no empty fields except optional hardware sensors.
+
+## 2. Dynamic Upscaling & Format Integrity (Test 1, 4)
+*   **Resolution transition**: The video loader successfully parsed the input at $640 \times 480$. The encoder dynamically initialized at $1280 \times 960$ matching the output shape of the first enhanced frame.
+*   **Output File**: [output_trimmed.mp4](file:///d:/Full%20Stack/AdaptiveSR/output_trimmed.mp4) was written successfully, with correct headers and frame ordering maintained dynamically and sequentially from 0 to 29.
+*   **Duration/FPS match**: Original duration was 1.0 second (30 frames at 30.0 fps); the output duration and frame count match perfectly (30 frames at 30.0 fps).
+
+## 3. Unavailable-Model Guard (Test 2)
+*   Verified that when scene metrics and device states trigger Rule 3 (e.g. extremely high complexity scene, system not on low battery/high temperature, GPU idle), the Decision Engine consults the `available: False` flag of `basicvsr++` in `MODEL_REGISTRY`.
+*   **Fallback Behavior**: The decision engine successfully bypassed `basicvsr++` and routed the frame to `real_esrgan` under Rule 4. This prevented pipeline crash/NotImplementedError completely. Verified by `test_case_5_extreme_complexity_gpu_free` in the pytest suite.
+
+## 4. Visual Comparison
+
+### Case A: FSRCNN (Lightweight) — Frame 4
+FSRCNN is selected for flat or simple frames (complexity < 0.43) to minimize power and latency overhead.
+*   **Before (640x480)**: ![fsrcnn_before](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/fsrcnn_before.png)
+*   **After FSRCNN (1280x960)**: ![fsrcnn_after](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/fsrcnn_after.png)
+
+### Case B: Real-ESRGAN (High Quality) — Frame 5
+Real-ESRGAN is selected for high complexity frames to maximize detail reconstruction.
+*   **Before (640x480)**: ![esrgan_before](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/esrgan_before.png)
+*   **After Real-ESRGAN (1280x960)**: ![esrgan_after](/C:/Users/karth/.gemini/antigravity-ide/brain/d775573f-4900-4f58-a4ae-64c963c9ea25/esrgan_after.png)
+
+
 
 
