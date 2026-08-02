@@ -169,16 +169,20 @@ We verified model execution correctness, caching speedups, CPU fallback executio
 
 | # | Test Case | Target Model | Device | Expected Shape | Status | Measured Timing / Peak VRAM |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | Smoke Test FSRCNN | `tinysr` | CPU | (128, 128, 3) | **PASSED** | Output image successfully saved |
-| **2** | Smoke Test Real-ESRGAN | `real_esrgan` | CPU | (128, 128, 3) | **PASSED** | Output image successfully saved |
-| **3** | Caching FSRCNN | `tinysr` | CPU | (128, 128, 3) | **PASSED** | Run 1: `18.0 ms` $\rightarrow$ Run 2: **`9.3 ms`** (1.9x speedup) |
-| **4** | Caching Real-ESRGAN | `real_esrgan` | CPU | (128, 128, 3) | **PASSED** | Run 1: `1020.3 ms` $\rightarrow$ Run 2: **`518.9 ms`** (2.0x speedup) |
-| **5** | CPU vs GPU Dispatch | `tinysr` | CPU | (128, 128, 3) | **PASSED** | Execution succeeded on CPU fallback |
-| **6** | EnhancementEngine Routing | Both | CPU | (128, 128, 3) | **PASSED** | Succeeded using `Decision` parameters |
-| **7** | VRAM Stress (x4 scaling) | `real_esrgan` | GPU | (1920, 2560, 3) | **SKIPPED** | PyTorch CUDA runtime not active in environment |
+| **1** | Smoke Test FSRCNN | `tinysr` | CPU/GPU | (128, 128, 3) | **PASSED** | Output image successfully saved |
+| **2** | Smoke Test Real-ESRGAN | `real_esrgan` | CPU/GPU | (128, 128, 3) | **PASSED** | Output image successfully saved |
+| **3** | Caching FSRCNN | `tinysr` | GPU | (128, 128, 3) | **PASSED** | Run 1: `51.5 ms` $\rightarrow$ Run 2: **`4.6 ms`** (11.2x speedup) |
+| **4** | Caching Real-ESRGAN | `real_esrgan` | GPU | (128, 128, 3) | **PASSED** | Run 1: `954.6 ms` $\rightarrow$ Run 2: **`201.7 ms`** (4.7x speedup) |
+| **5** | CPU vs GPU Dispatch | `tinysr` | Both | (128, 128, 3) | **PASSED** | Ran on CPU and CUDA GPU explicitly |
+| **6** | EnhancementEngine Routing | Both | GPU | (128, 128, 3) | **PASSED** | Succeeded using `Decision` parameters |
+| **7** | VRAM Stress (x4 scaling) | `real_esrgan` | GPU | (1920, 2560, 3) | **PASSED** | Peak VRAM: **`1510.05 MB`** (runs successfully under 4GB limit) |
 
 ## Verification Analysis
 - **Import Workarounds**: The dynamic `torchvision.transforms.functional_tensor` and `collections.Container` import injections successfully resolved all Real-ESRGAN/BasicSR compatibility conflicts at runtime.
 - **Dynamic Registry Dispatch**: `EnhancementEngine` successfully resolved string-path loader functions via `importlib` and cached them, executing without hardcoded model branches.
-- **Latency Benchmarking**: The measured latencies align with expectations. `tinysr` runs in **~7.5ms** on CPU, whereas `real_esrgan` takes **~407ms** (proving the 50x resource difference between lightweight and mid-tier models).
-- **Environment Limit**: PyTorch CUDA is not currently enabled in the local environment, resulting in GPU test cases falling back to CPU or skipping (Case 7). Since `get_inference_device()` falls back cleanly to CPU, execution correctness is preserved.
+- **Latency Benchmarking**: 
+  - FSRCNN (`tinysr`): **`7.87 ms`** on CPU, **`5.25 ms`** on GPU (GTX 1650).
+  - Real-ESRGAN (`real_esrgan`): **`439.00 ms`** on CPU, **`167.01 ms`** on GPU.
+  The results prove the ~50x difference in resource consumption between the lightweight and mid-tier models, validating the need for dynamic switching.
+- **GPU Integration**: PyTorch CUDA is successfully enabled using the `D:\Full Stack\Caption Generator\caption-app\venv` target virtual environment, allowing all GPU-accelerated cases and stress tests to run to completion.
+
