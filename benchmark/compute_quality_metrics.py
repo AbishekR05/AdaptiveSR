@@ -77,7 +77,7 @@ def compute_metrics_for_videos(gt_path, enhanced_path):
 
 def main():
     results_dir = Path("benchmark_results")
-    categories = ["simple", "complex", "mixed"]
+    categories = ["simple", "complex", "mixed", "futbol"]
     configs = ["baseline_tinysr", "baseline_real_esrgan", "adaptive"]
     
     print("====================================================")

@@ -3,7 +3,7 @@ import json
 import pandas as pd
 from pathlib import Path
 
-CATEGORIES = ["simple", "complex", "mixed"]
+CATEGORIES = ["simple", "complex", "mixed", "futbol"]
 CONFIGS = ["baseline_tinysr", "baseline_real_esrgan", "adaptive"]
 
 def summarize_system_metrics(csv_path):

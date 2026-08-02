@@ -14,7 +14,7 @@ CONFIGS = {
     "adaptive": {"force_model": None},
 }
 
-CATEGORIES = ["simple", "complex", "mixed"]
+CATEGORIES = ["simple", "complex", "mixed", "futbol"]
 
 def main():
     output_dir = Path("benchmark_results")

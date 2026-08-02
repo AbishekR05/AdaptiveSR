@@ -14,6 +14,9 @@ This report summarizes the experimental evaluation of the AdaptiveSR pipeline ac
 | mixed | baseline_tinysr | 24.98 | 0.2846 | 0.0921 |
 | mixed | baseline_real_esrgan | 33.53 | 0.8459 | 0.0806 |
 | mixed | adaptive | 33.39 | 0.8367 | 0.0846 |
+| futbol | baseline_tinysr | 30.54 | 0.9147 | 0.0640 |
+| futbol | baseline_real_esrgan | 26.40 | 0.8139 | 0.1561 |
+| futbol | adaptive | 26.93 | 0.8306 | 0.1374 |
 
 ## 2. System Telemetry Comparison
 | Category | Configuration | Total Latency | Avg CPU | Avg GPU | Battery Delta | Avg Temp | Switch Rate | Model Distribution |
@@ -27,3 +30,6 @@ This report summarizes the experimental evaluation of the AdaptiveSR pipeline ac
 | mixed | baseline_tinysr | 2.85s | 73.4% | nan% | 0.0% | - | 0.0% | tinysr: 100.0% |
 | mixed | baseline_real_esrgan | 67.44s | 31.1% | nan% | -1.0% | - | 0.0% | real_esrgan: 100.0% |
 | mixed | adaptive | 66.37s | 35.5% | nan% | 0.0% | - | 3.3% | real_esrgan: 98.3%, tinysr: 1.7% |
+| futbol | baseline_tinysr | 3.05s | 68.9% | 21.7% | 0.0% | 50.2 C | 0.0% | tinysr: 100.0% |
+| futbol | baseline_real_esrgan | 72.56s | 31.4% | nan% | 1.0% | - | 0.0% | real_esrgan: 100.0% |
+| futbol | adaptive | 65.23s | 27.0% | nan% | 2.0% | - | 1.7% | real_esrgan: 86.7%, tinysr: 13.3% |
