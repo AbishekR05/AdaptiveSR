@@ -139,6 +139,7 @@ We verified the decision logic against a truth table covering all 5 rule tiers, 
   - *Case 1*: `"low battery (0.15 < 0.2) + high temp (0.80 > 0.75)"`
   - *Case 5*: `"very high complexity (0.95 > 0.9) + GPU headroom available (0.10 < 0.8)"`
   - *Case 6*: `"high complexity (0.95 > 0.75) + CPU headroom available (0.10 < 0.6)"` (Rule 3 skipped due to missing GPU)
+- **Rule 3 Verification (GPU Limitation)**: Since the current development machine lacks an active NVIDIA GPU (`gpu=None`), Rule 3 (which requires a GPU) cannot be exercised using live Phase 2 hardware telemetry. It was validated exclusively via synthetic/mocked `DeviceState` objects (Case 5).
 
 ## Design Decision
 - **Decision Stability & Hysteresis**: In this phase, decisions are made on a frame-by-frame basis. A complexity score hovering near a threshold (e.g. `0.75`) may cause rapid model-switching (flickering). While hysteresis is out-of-scope for v1, it is flagged as an open constraint for implementation during Phase 6/7.
