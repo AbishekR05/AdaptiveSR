@@ -13,11 +13,11 @@ class DeviceState:
 
 @dataclass
 class SceneDescriptor:
-    motion: float
-    texture: float
-    edges: float
-    complexity: float
-    degradation: float = 0.0
+    motion: float       # 0-1
+    texture: float      # 0-1
+    edges: float         # 0-1
+    blur_clarity: float  # 0-1, higher = sharper
+    complexity: float    # 0-1, final combined score
 
 @dataclass
 class Decision:

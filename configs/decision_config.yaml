@@ -6,3 +6,10 @@ thresholds:
   very_high_complexity: 0.90
   cpu_headroom: 0.60
   gpu_headroom: 0.80
+
+complexity_weights:
+  motion: 0.25
+  texture: 0.50
+  edges: 0.20
+  blur_clarity: 0.05
+

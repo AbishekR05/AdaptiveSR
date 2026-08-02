@@ -52,3 +52,46 @@ A verification script was run for 12 seconds sampling every 0.5s:
 - **Sampling CADENCE**: Telemetry logs indicate consistent sampling intervals of exactly ~0.5 seconds, fully decoupled from frame rates.
 - **Hardware Fallbacks**: No hardware errors occurred on non-GPU platforms; parameters cleanly initialized to `None` values where unavailable.
 
+---
+
+# Validation Results - Phase 3 Scene Analyzer & Complexity Estimator
+
+This section logs the verification of the custom visual analysis and complexity estimation pipeline.
+
+## Evaluation Setup
+A verification script generated 5 distinct synthetic frames representing different complexity categories:
+1.  **Flat sky / blank wall**: Solid gray image ($v=0.0$).
+2.  **Landscape (moderate detail)**: Color gradient background, green mountain polygon, and geometric sun circle ($v=56.0$).
+3.  **Close-up face**: Large oval silhouette containing round eye ovals and mouth curves ($v=120.0$).
+4.  **Moderately busy scene**: Checkerboard pattern background superimposed with thick text and multiple geometric shapes ($v\ge 500.0$).
+5.  **Crowded street / high details**: Dense 12px grid overlaying high-frequency white noise ($v\ge 500.0$).
+
+## Decision Settings & Scale Factors
+- **Scale Factors**: `MOTION_SCALE_FACTOR = 4.0`, `TEXTURE_SCALE_FACTOR = 500.0`, `BLUR_SCALE_FACTOR = 300.0`.
+- **Tuned Weights**:
+  - `motion`: 0.25
+  - `texture`: 0.50
+  - `edges`: 0.20
+  - `blur_clarity`: 0.05
+  *(Tuned during validation to balance the Laplacian variance's opposing influence on texture and blur clarity in low-detail scenes.)*
+
+## Telemetry Response Results
+
+| Frame Description | Motion | Texture | Edges | Blur Clarity | Complexity Score |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Flat sky / blank wall** | 0.00 | 0.0000 | 0.0000 | 0.0000 | **0.0500** |
+| **Landscape (moderate detail)** | 0.00 | 0.1119 | 0.0029 | 0.1865 | **0.0972** |
+| **Close-up face** | 0.00 | 0.2399 | 0.0020 | 0.3999 | **0.1504** |
+| **Moderately busy scene** | 0.00 | 1.0000 | 0.0304 | 1.0000 | **0.5061** |
+| **Crowded street / high details** | 0.00 | 1.0000 | 0.4304 | 1.0000 | **0.5861** |
+
+## Verification Analysis
+- **Monotonicity (Ranking Sanity)**: The complexity score scales monotonically matching human intuition: Flat (0.0500) < Landscape (0.0972) < Close-up face (0.1504) < Busy (0.5061) < Crowded street (0.5861).
+- **Determinism**: Multiple identical invocations on the same frame yielded exactly matching float values (Run 1: `0.150358`, Run 2: `0.150358`), confirming pure functions without side effects.
+- **Stability**: Adjacent frame testing with camera drift (1px shift) showed a negligible score variance ($|c_t - c_{t-1}| = 0.0001 < 0.05$), ensuring the signal will not cause flickering model selections.
+- **Edge Case Processing**: Passing `prev_frame=None` on initial frame execution returned exactly `motion=0.0` rather than causing numeric exceptions or crashes.
+
+## Design Decision
+- **Inference Sampling Strategy**: Full **per-frame analysis** is selected for v1. This preserves responsiveness to sudden cuts or face entries. Compute overhead is low compared to upcoming neural VSR model inference.
+
+
