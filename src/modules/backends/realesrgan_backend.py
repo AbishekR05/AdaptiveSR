@@ -67,8 +67,8 @@ def load_model(device: str, scale: int = 2) -> RealESRGANer:
         scale=scale
     )
 
-    # Enable FP16 (half) precision on CUDA, disable on CPU
-    half_precision = (device == "cuda")
+    # Disable FP16 (half) precision on CUDA to prevent underflow/black screen issues on GTX 1650
+    half_precision = False
 
     # Initialize upsampler wrapper
     upsampler = RealESRGANer(
