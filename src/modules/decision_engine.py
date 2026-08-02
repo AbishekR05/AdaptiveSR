@@ -14,6 +14,13 @@ class DecisionEngine:
         self.ignore_device = ignore_device
         self.ignore_scene = ignore_scene
 
+    def _select_scale(self, device: DeviceState, max_scale: int) -> int:
+        t = self.thresholds
+        threshold_battery = t.get("scale_reduction_battery", 0.30)
+        if device.battery is not None and device.battery < threshold_battery:
+            return min(2, max_scale)
+        return max_scale
+
     def decide(self, device: DeviceState, scene: SceneDescriptor) -> Decision:
         if self.ignore_device:
             device = DeviceState(cpu=0.10, gpu=0.10, ram=0.50, system_ram=0.50, battery=0.90, charging=True, temperature=0.30, fps=30.0)
@@ -36,18 +43,20 @@ class DecisionEngine:
         # Rule 1: Critical device state -> always lightweight, regardless of scene
         if (device.battery is not None and device.battery < t["low_battery"]) and \
            (device.temperature is not None and device.temperature > t["high_temp"]):
+            scale = self._select_scale(device, 2)
             return Decision(
                 model="tinysr",
-                scale=2,
+                scale=scale,
                 reason=f"low battery ({device.battery:.2f} < {t['low_battery']}) + high temp ({device.temperature:.2f} > {t['high_temp']})",
                 priority="high"
             )
 
         # Rule 2: Low complexity -> lightweight regardless of device state
         if scene.complexity < t["low_complexity"]:
+            scale = self._select_scale(device, 2)
             return Decision(
                 model="tinysr",
-                scale=2,
+                scale=scale,
                 reason=f"low complexity ({scene.complexity:.2f} < {t['low_complexity']})"
             )
 
@@ -56,9 +65,10 @@ class DecisionEngine:
         if (scene.complexity > t["very_high_complexity"]) and \
            (device.gpu is not None and device.gpu < t["gpu_headroom"]) and \
            MODEL_REGISTRY.get("basicvsr++", {}).get("available", True):
+            scale = self._select_scale(device, 4)
             return Decision(
                 model="basicvsr++",
-                scale=2,
+                scale=scale,
                 reason=f"very high complexity ({scene.complexity:.2f} > {t['very_high_complexity']}) + GPU headroom available ({device.gpu:.2f} < {t['gpu_headroom']})",
                 priority="high"
             )
@@ -66,15 +76,17 @@ class DecisionEngine:
         # Rule 4: High complexity + CPU headroom -> mid-tier model
         if (scene.complexity > t["high_complexity"]) and \
            (device.cpu < t["cpu_headroom"]):
+            scale = self._select_scale(device, 2)
             return Decision(
                 model="real_esrgan",
-                scale=2,
+                scale=scale,
                 reason=f"high complexity ({scene.complexity:.2f} > {t['high_complexity']}) + CPU headroom available ({device.cpu:.2f} < {t['cpu_headroom']})"
             )
 
         # Rule 5: Fallback — moderate complexity, no strong constraint triggered
+        scale = self._select_scale(device, 2)
         return Decision(
             model="real_esrgan",
-            scale=2,
+            scale=scale,
             reason="default: moderate complexity, no constraint triggered"
         )

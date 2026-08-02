@@ -195,5 +195,53 @@ def test_pipeline_ablation():
     dec_ablation = engine_ablation.decide(dev, scene)
     assert dec_ablation.model == "real_esrgan"
 
+def test_pipeline_int8_backend():
+    from src.modules.backends.fsrcnn_backend_int8 import infer, load_model
+    import numpy as np
+    
+    # Load session
+    session = load_model(scale=2)
+    assert session is not None
+    
+    # Run dynamic INT8 inference
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    frame[25:75, 25:75] = (255, 255, 255)  # draw white square
+    
+    out = infer(frame, scale=2)
+    assert out.shape == (200, 200, 3)
+
+def test_decision_scale_reduction():
+    from src.modules.decision_engine import DecisionEngine
+    from src.utils.state_types import DeviceState, SceneDescriptor
+    
+    # Under low battery (0.25) but moderate complexity (0.80), selected model is real_esrgan, but scale should be restricted to 2
+    dev = DeviceState(cpu=0.1, gpu=0.1, ram=0.5, system_ram=0.5, battery=0.25, charging=False, temperature=0.30, fps=30.0)
+    scene = SceneDescriptor(motion=0.0, texture=0.80, edges=0.80, blur_clarity=0.80, complexity=0.80)
+    
+    engine = DecisionEngine()
+    dec = engine.decide(dev, scene)
+    assert dec.model == "real_esrgan"
+    assert dec.scale == 2
+
+def test_realesrgan_adaptive_tiling():
+    from src.modules.backends.realesrgan_backend import infer, load_model
+    from src.utils.state_types import DeviceState
+    import numpy as np
+    
+    # Initialize and mock high GPU load
+    dev_busy = DeviceState(cpu=0.1, gpu=0.85, ram=0.5, system_ram=0.5, battery=0.90, charging=True, temperature=0.30, fps=30.0)
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    
+    # Check that high GPU workload dynamically selects tile = 400
+    infer(frame, device="cuda", scale=2, device_state=dev_busy)
+    upsampler = load_model("cuda", scale=2)
+    assert upsampler.tile == 400
+    
+    # Check that low GPU workload dynamically selects tile = 0 (fastest)
+    dev_idle = DeviceState(cpu=0.1, gpu=0.10, ram=0.5, system_ram=0.5, battery=0.90, charging=True, temperature=0.30, fps=30.0)
+    infer(frame, device="cuda", scale=2, device_state=dev_idle)
+    assert upsampler.tile == 0
+
+
 
 

@@ -34,4 +34,28 @@ MODEL_REGISTRY = {
         "sequence_window": 5,
         "available": False,                 # Deferred due to MMCV Windows build dependency mismatch
     },
+    "skip": {
+        "display_name": "Skip (Passthrough)",
+        "loader": None,
+        "infer_fn": None,
+        "expected_memory_mb": 0,
+        "expected_latency_ms_cpu": 0,
+        "expected_latency_ms_gpu": 0,
+        "supported_scales": [1],
+        "quality_rating": "low",
+        "requires_sequence": False,
+        "available": True,
+    },
+    "tinysr_int8": {
+        "display_name": "FSRCNN (INT8 Quantized CPU)",
+        "loader": "src.modules.backends.fsrcnn_backend_int8.load_model",
+        "infer_fn": "src.modules.backends.fsrcnn_backend_int8.infer",
+        "expected_memory_mb": 30,
+        "expected_latency_ms_cpu": 100,      # Estimated 2x-4x speedup over FP32 (400ms)
+        "expected_latency_ms_gpu": 999999,  # CPU only
+        "supported_scales": [2],
+        "quality_rating": "medium_low",
+        "requires_sequence": False,
+        "available": True,
+    },
 }

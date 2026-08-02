@@ -6,6 +6,8 @@ thresholds:
   very_high_complexity: 0.90
   cpu_headroom: 0.60
   gpu_headroom: 0.80
+  scale_reduction_battery: 0.30
+  tile_size_healthy_gpu_threshold: 0.60
   skip_enhancement:
     battery: 0.10
     temperature: 0.85

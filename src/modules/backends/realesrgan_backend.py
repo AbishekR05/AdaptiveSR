@@ -88,9 +88,27 @@ def load_model(device: str, scale: int = 2) -> RealESRGANer:
     return upsampler
 
 
-def infer(frame_bgr: np.ndarray, device: str, scale: int = 2) -> np.ndarray:
+def infer(frame_bgr: np.ndarray, device: str, scale: int = 2, device_state = None) -> np.ndarray:
     upsampler = load_model(device, scale=scale)
     
+    # Dynamic Tiling: Set tile size based on GPU workload constraints
+    if device_state is not None:
+        gpu_load = device_state.gpu if device_state.gpu is not None else 0.0
+        threshold = 0.60
+        if os.path.exists("configs/decision_config.yaml"):
+            try:
+                import yaml
+                with open("configs/decision_config.yaml", "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f)
+                    threshold = cfg.get("thresholds", {}).get("tile_size_healthy_gpu_threshold", 0.60)
+            except Exception:
+                pass
+        
+        if gpu_load >= threshold:
+            upsampler.tile = 400
+        else:
+            upsampler.tile = 0
+            
     # RealESRGANer expects BGR input and returns enhanced BGR output
     enhanced_frame, _ = upsampler.enhance(frame_bgr, outscale=scale)
     return enhanced_frame

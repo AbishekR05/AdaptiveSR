@@ -30,7 +30,7 @@ class EnhancementEngine:
         self._resolved_cache[model_name] = infer_fn
         return infer_fn
 
-    def enhance(self, frame_bgr, decision: Decision, frame_window: list | None = None):
+    def enhance(self, frame_bgr, decision: Decision, frame_window: list | None = None, device_state = None):
         if decision.model == "skip":
             return frame_bgr
         entry = MODEL_REGISTRY[decision.model]
@@ -41,6 +41,10 @@ class EnhancementEngine:
                 return self._fallback_single_frame(frame_bgr, decision)
             return infer_fn(frame_window, self.device, scale=decision.scale)
         else:
+            import inspect
+            sig = inspect.signature(infer_fn)
+            if "device_state" in sig.parameters:
+                return infer_fn(frame_bgr, self.device, scale=decision.scale, device_state=device_state)
             return infer_fn(frame_bgr, self.device, scale=decision.scale)
 
     def _fallback_single_frame(self, frame_bgr, decision: Decision):

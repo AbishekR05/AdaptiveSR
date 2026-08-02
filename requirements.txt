@@ -10,3 +10,5 @@ basicsr==1.4.2
 pynvml==13.0.1
 scikit-image
 lpips
+onnx
+onnxruntime

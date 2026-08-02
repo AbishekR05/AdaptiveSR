@@ -82,7 +82,7 @@ def run_pipeline(input_path, output_path, config_path="configs/decision_config.y
 
             # Enhance frame
             t_infer_start = time.time()
-            enhanced_frame = enhancement_engine.enhance(frame, decision, frame_window=None)
+            enhanced_frame = enhancement_engine.enhance(frame, decision, frame_window=None, device_state=device_state)
             inference_ms = (time.time() - t_infer_start) * 1000.0
 
             # Store in buffer
