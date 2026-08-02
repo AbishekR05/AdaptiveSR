@@ -4,7 +4,8 @@ from dataclasses import dataclass
 class DeviceState:
     cpu: float          # 0-1
     gpu: float | None    # 0-1, None if no GPU
-    ram: float           # 0-1 used
+    ram: float           # process RSS memory in MB
+    system_ram: float    # 0-1 system RAM utilization
     battery: float | None  # 0-1, None if desktop/no battery
     charging: bool | None
     temperature: float | None  # 0-1 normalized, None if unavailable

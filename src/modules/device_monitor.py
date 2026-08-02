@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import logging
@@ -19,10 +20,12 @@ except (ImportError, Exception) as e:
 class DeviceMonitor:
     def __init__(self, poll_interval=0.5):
         self.poll_interval = poll_interval
+        self._process = psutil.Process(os.getpid())
         self._state = DeviceState(
             cpu=0.0, 
             gpu=None, 
             ram=0.0, 
+            system_ram=0.0,
             battery=None,
             charging=None, 
             temperature=None, 
@@ -59,8 +62,12 @@ class DeviceMonitor:
                 # 1. CPU utilization (non-blocking call, first call might be 0 but subsequent calls are accurate)
                 cpu = psutil.cpu_percent() / 100.0
                 
-                # 2. RAM utilization
-                ram = psutil.virtual_memory().percent / 100.0
+                # 2. RAM utilization (process RSS in MB, and system-wide %)
+                try:
+                    ram = self._process.memory_info().rss / (1024.0 * 1024.0)
+                except Exception:
+                    ram = 0.0
+                system_ram = psutil.virtual_memory().percent / 100.0
                 
                 # 3. Battery status
                 batt = psutil.sensors_battery()
@@ -106,6 +113,7 @@ class DeviceMonitor:
                         cpu=cpu,
                         gpu=gpu,
                         ram=ram,
+                        system_ram=system_ram,
                         battery=battery,
                         charging=charging,
                         temperature=final_temp,
@@ -125,6 +133,7 @@ class DeviceMonitor:
                 cpu=s.cpu,
                 gpu=s.gpu,
                 ram=s.ram,
+                system_ram=s.system_ram,
                 battery=s.battery,
                 charging=s.charging,
                 temperature=s.temperature,

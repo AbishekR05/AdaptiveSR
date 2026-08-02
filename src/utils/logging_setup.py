@@ -48,7 +48,7 @@ class MetricsLogger:
         self.filepath = filepath
         self.headers = [
             "frame_no", "timestamp", "selected_model", "complexity", 
-            "cpu", "gpu", "ram", "battery", "temp", "inference_ms", "decision_reason"
+            "cpu", "gpu", "ram", "system_ram", "battery", "temp", "inference_ms", "decision_reason"
         ]
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -63,7 +63,7 @@ class MetricsLogger:
             self.file.flush()
 
     def log_frame(self, frame_no: int, selected_model: str, complexity: float,
-                  cpu: float, gpu: float | None, ram: float, battery: float | None,
+                  cpu: float, gpu: float | None, ram: float, system_ram: float, battery: float | None,
                   temp: float | None, inference_ms: float, decision_reason: str):
         """Logs a single row of execution telemetry to the metrics CSV."""
         timestamp = datetime.now().isoformat()
@@ -78,7 +78,8 @@ class MetricsLogger:
             f"{complexity:.4f}",
             f"{cpu:.4f}",
             gpu_str,
-            f"{ram:.4f}",
+            f"{ram:.2f}",
+            f"{system_ram:.4f}",
             batt_str,
             temp_str,
             f"{inference_ms:.2f}",

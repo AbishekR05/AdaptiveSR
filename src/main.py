@@ -99,6 +99,7 @@ def main():
                 cpu=dev_state.cpu,
                 gpu=dev_state.gpu,
                 ram=dev_state.ram,
+                system_ram=dev_state.system_ram,
                 battery=dev_state.battery,
                 temp=dev_state.temperature,
                 inference_ms=frame_duration_ms,
@@ -116,7 +117,7 @@ def main():
                     f"Processing FPS: {current_fps:.2f} | "
                     f"CPU: {dev_state.cpu*100:.1f}% | "
                     f"GPU: {gpu_str} | "
-                    f"RAM: {dev_state.ram*100:.1f}% | "
+                    f"Proc RAM: {dev_state.ram:.1f} MB (Sys: {dev_state.system_ram*100:.1f}%) | "
                     f"Battery: {batt_str}"
                 )
                 last_print_time = now

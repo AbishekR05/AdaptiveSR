@@ -32,6 +32,7 @@ def test_device_monitor():
     state = monitor.get_state()
     assert state.cpu >= 0.0
     assert state.ram >= 0.0
+    assert state.system_ram >= 0.0
     
     # Update FPS and ensure it registers
     monitor.update_fps(24.5)
