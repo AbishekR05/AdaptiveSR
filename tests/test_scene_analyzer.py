@@ -64,3 +64,22 @@ def test_rank_sanity():
     # Flat complexity should be low, geom moderate, noise very high
     assert comp_flat < comp_geom
     assert comp_geom < comp_noise
+
+def test_motion_sensitivity():
+    base_frame = np.zeros((240, 320, 3), dtype=np.uint8)
+    cv2.rectangle(base_frame, (50, 50), (150, 150), (0, 0, 255), -1)
+    
+    small_move = np.zeros((240, 320, 3), dtype=np.uint8)
+    cv2.rectangle(small_move, (53, 50), (153, 150), (0, 0, 255), -1)
+    
+    medium_move = np.zeros((240, 320, 3), dtype=np.uint8)
+    cv2.rectangle(medium_move, (65, 50), (165, 150), (0, 0, 255), -1)
+    
+    large_move = np.zeros((240, 320, 3), dtype=np.uint8)
+    cv2.rectangle(large_move, (110, 50), (210, 150), (0, 0, 255), -1)
+    
+    m_small = analyze_frame(small_move, base_frame)["motion"]
+    m_medium = analyze_frame(medium_move, base_frame)["motion"]
+    m_large = analyze_frame(large_move, base_frame)["motion"]
+    
+    assert 0.0 < m_small < m_medium < m_large <= 1.0

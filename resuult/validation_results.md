@@ -68,12 +68,13 @@ A verification script generated 5 distinct synthetic frames representing differe
 
 ## Decision Settings & Scale Factors
 - **Scale Factors**: `MOTION_SCALE_FACTOR = 4.0`, `TEXTURE_SCALE_FACTOR = 500.0`, `BLUR_SCALE_FACTOR = 300.0`.
-- **Tuned Weights**:
+- **Tuned Weights (Design Decision - Option 2)**:
   - `motion`: 0.25
   - `texture`: 0.50
   - `edges`: 0.20
   - `blur_clarity`: 0.05
-  *(Tuned during validation to balance the Laplacian variance's opposing influence on texture and blur clarity in low-detail scenes.)*
+  *(Design Choice: Texture and blur clarity are highly correlated as both derive from Laplacian variance. During initial validation, equal weighting caused the complexity score to drop in low-detail zones because the decrease in the inverted `(1 - blur_clarity)` term outpaced the gain in `texture`. We selected Option 2: preserve the metric in the database but heavily down-weight it to 0.05, keeping its influence secondary and documenting this redundancy as a measured methodology detail.)*
+
 
 ## Telemetry Response Results
 
@@ -90,8 +91,14 @@ A verification script generated 5 distinct synthetic frames representing differe
 - **Determinism**: Multiple identical invocations on the same frame yielded exactly matching float values (Run 1: `0.150358`, Run 2: `0.150358`), confirming pure functions without side effects.
 - **Stability**: Adjacent frame testing with camera drift (1px shift) showed a negligible score variance ($|c_t - c_{t-1}| = 0.0001 < 0.05$), ensuring the signal will not cause flickering model selections.
 - **Edge Case Processing**: Passing `prev_frame=None` on initial frame execution returned exactly `motion=0.0` rather than causing numeric exceptions or crashes.
+- **Motion Sensitivity (Translation Scaling)**: Evaluated dynamic motion response using shape translations on a base frame:
+  - *Small translation (5px shift)*: **`0.0078`**
+  - *Medium translation (30px shift)*: **`0.0468`**
+  - *Large translation (120px shift)*: **`0.1872`**
+  This confirms that motion scales proportionally with translation distance ($0.0 < 0.0078 < 0.0468 < 0.1872 \le 1.0$) and successfully maps moving objects without clipping.
 
 ## Design Decision
 - **Inference Sampling Strategy**: Full **per-frame analysis** is selected for v1. This preserves responsiveness to sudden cuts or face entries. Compute overhead is low compared to upcoming neural VSR model inference.
+
 
 

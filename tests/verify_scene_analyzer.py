@@ -145,7 +145,33 @@ def main():
     print(f"First Frame Motion: {first_frame_metrics['motion']:.2f}")
     print(f"First Frame Edge Case Check: {'PASSED' if first_frame_passed else 'FAILED'}")
     
-    overall_success = monotonic and determinism_passed and stability_passed and first_frame_passed
+    # 5. Motion Sensitivity test
+    print("\n--- Test 5: Motion Sensitivity Test ---")
+    base_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.rectangle(base_frame, (100, 100), (300, 300), (0, 0, 255), -1)
+    
+    small_move = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.rectangle(small_move, (105, 100), (305, 300), (0, 0, 255), -1)
+    
+    medium_move = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.rectangle(medium_move, (130, 100), (330, 300), (0, 0, 255), -1)
+    
+    large_move = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.rectangle(large_move, (220, 100), (420, 300), (0, 0, 255), -1)
+    
+    m_small = analyze_frame(small_move, base_frame)["motion"]
+    m_medium = analyze_frame(medium_move, base_frame)["motion"]
+    m_large = analyze_frame(large_move, base_frame)["motion"]
+    
+    print(f"Small Shift (5px) Motion: {m_small:.4f}")
+    print(f"Medium Shift (30px) Motion: {m_medium:.4f}")
+    print(f"Large Shift (120px) Motion: {m_large:.4f}")
+    
+    motion_sensitivity_passed = (0.0 < m_small < m_medium < m_large <= 1.0)
+    print(f"Motion Sensitivity Check: {'PASSED' if motion_sensitivity_passed else 'FAILED'}")
+    
+    overall_success = (monotonic and determinism_passed and stability_passed and 
+                       first_frame_passed and motion_sensitivity_passed)
     print(f"\nOverall Phase 3 Success: {'[SUCCESS]' if overall_success else '[FAILED]'}")
 
 if __name__ == "__main__":
