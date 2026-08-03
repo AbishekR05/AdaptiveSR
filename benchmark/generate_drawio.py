@@ -1,4 +1,7 @@
-<mxfile host="65bd71144e">
+import os
+
+def create_drawio():
+    xml_content = """<mxfile host="65bd71144e">
     <diagram id="AdaptiveSR_Architecture" name="AdaptiveSR End-to-End Flow">
         <mxGraphModel dx="1200" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
@@ -117,3 +120,10 @@
         </mxGraphModel>
     </diagram>
 </mxfile>
+"""
+    with open("architecture.drawio", "w", encoding="utf-8") as f:
+        f.write(xml_content)
+    print("architecture.drawio compiled successfully with the requested diagram!")
+
+if __name__ == "__main__":
+    create_drawio()
