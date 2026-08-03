@@ -81,7 +81,64 @@
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="20" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="6" target="7">
-                    <mxGeometry relative="1" as="geometry"/>
+                    <mxGeometry relative="1" as="geom                           ┌─────────────────────────┐
+                           │     Input Source        │
+                           │─────────────────────────│
+                           │ • Local Video           │
+                           │ • YouTube URL           │
+                           │ • Live Stream           │
+                           └─────────────┬───────────┘
+                                         │
+                                         ▼
+                           ┌─────────────────────────┐
+                           │ Input Acquisition Layer │
+                           │ (Download / Decode)     │
+                           └─────────────┬───────────┘
+                                         │
+             ┌───────────────────────────┼────────────────────────────┐
+             │                           │                            │
+             ▼                           ▼                            ▼
+ ┌────────────────────┐      ┌────────────────────┐      ┌────────────────────┐
+ │ Network Monitor    │      │ Device Monitor     │      │ Scene Analyzer     │
+ │────────────────────│      │────────────────────│      │────────────────────│
+ │ • Bandwidth        │      │ • CPU Usage        │      │ • Motion           │
+ │ • Bitrate          │      │ • GPU Usage        │      │ • Texture          │
+ │ • Latency          │      │ • RAM Usage        │      │ • Complexity       │
+ │ • Connection Type  │      │ • Battery          │      │ • Edge Density     │
+ └──────────┬─────────┘      │ • Temperature      │      │ • Semantic Score   │
+            │                └──────────┬─────────┘      └──────────┬─────────┘
+            └───────────────────────────┼────────────────────────────┘
+                                        ▼
+                      ┌────────────────────────────────────┐
+                      │      Adaptive Decision Engine      │
+                      │────────────────────────────────────│
+                      │ Multi-Criteria Decision Making     │
+                      │ (QoE + Resource Optimization)      │
+                      └──────────────┬─────────────────────┘
+                                     │
+          ┌──────────────────────────┼─────────────────────────────┐
+          │                          │                             │
+          ▼                          ▼                             ▼
+ ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+ │ Bitrate Selector │      │ Model Selector   │      │ Scale Selector   │
+ │──────────────────│      │──────────────────│      │──────────────────│
+ │ 480p / 720p      │      │ BasicVSR++       │      │ ×2               │
+ │ 1080p            │      │ Real-ESRGAN      │      │ ×4               │
+ │ 4K               │      │ TinySR           │      │ Native           │
+ └────────┬─────────┘      └────────┬─────────┘      └────────┬─────────┘
+          └─────────────────────────┼──────────────────────────┘
+                                    ▼
+                      ┌────────────────────────────────────┐
+                      │    Video Super-Resolution Engine   │
+                      └────────────────┬───────────────────┘
+                                       ▼
+                      ┌────────────────────────────────────┐
+                      │  Reconstruction & Post-processing  │
+                      └────────────────┬───────────────────┘
+                                       ▼
+                      ┌────────────────────────────────────┐
+                      │         Enhanced Output Video      │
+                      └────────────────────────────────────┘etry"/>
                 </mxCell>
                 
                 <!-- Connections Row 3 -> Row 4 -->
