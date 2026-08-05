@@ -146,9 +146,30 @@ Inference latencies and quality differences evaluated on 30 frames of `futbol_lr
 
 ---
 
-## 4. Key Thesis Takeaways & Conclusions
+## 4. Phase 9: Preprocessing & Interactive Jupyter Notebook (Review 1 Deliverable)
+To facilitate visual walkthroughs and simplify academic review (specifically for Review 1), we developed a comprehensive, interactive Jupyter notebook registering the framework's entire multi-modal preprocessing and telemetry suite:
+*   **File Path**: [preprocessing.ipynb](file:///d:/Full%20Stack/AdaptiveSR/notebook/Phase1/preprocessing.ipynb)
+*   **Feature Verification Suite (10 Output Steps)**:
+    1.  **Output 1: Original Video**: Video ingestion verification, loading `input_trimmed.mp4` and reporting frame count extraction.
+    2.  **Output 2: Frame Extraction**: Subplot display verification for Frames 1, 10, 20, and 30.
+    3.  **Output 3: Scene Complexity Table**: Segment-by-segment qualitative categorization (`Low`, `Medium`, `High`, `Very High`) derived from edge/texture parameters.
+    4.  **Output 4: Motion Analysis (Heatmap)**: Dense Farneback Optical Flow calculation plotting a magnitude intensity heatmap alongside the motion score.
+    5.  **Output 5: Edge Density (Canny)**: Extraction of Sobel gradients and Canny edge mask, overlaying the edge density percentage.
+    6.  **Output 6: Blur Estimation (Laplacian)**: Focus sharpness calculation using the variance of the Laplacian filter.
+    7.  **Output 7: Texture Analysis (LBP & Entropy)**: Local Binary Pattern (LBP) texture mapping and Shannon Entropy calculation.
+    8.  **Output 7b: Baseline Quality Metrics**: Frame quality validation computing standard bilinear resizing loss (SSIM: **`0.9950`**, PSNR: **`33.25 dB`**) compared to Ground Truth.
+    9.  **Output 7c: Temporal Curves**: Line plots tracking Laplacian variance, Canny edges, and complexity scores over all frames relative to decision thresholds (0.15, 0.35, 0.60).
+    10. **Output 8 & 9: Telemetry & Network Metrics**: Host resource telemetry (CPU/GPU utilization, RAM, battery) and network bandwidth indicators.
+    11. **Output 10: Unified Context Vector**: Aggregation of all metric classes into a state-space vector representing the multi-modal system conditions.
+
+All output cells, plots, heatmaps, and tables are **fully executed and saved directly in the notebook file** as base64 images, enabling instant off-line reviews.
+
+---
+
+## 5. Key Thesis Takeaways & Conclusions
 
 1.  **Dynamic Decision Viability**: The rule-based mapping successfully mitigates the latency cost of deep upscaling models, routing frames to FSRCNN or Skip in low-complexity scenes. On mixed sequences, it captures the high-fidelity reconstruction of Real-ESRGAN in complex spots while maintaining a 96.0% latency reduction in flat spots.
 2.  **Telemetry-Driven Hardware Safety**: Rule 1 (low battery + high thermal load) successfully overrides quality routing, dynamically forcing the pipeline to run lightweight FSRCNN, preventing system crashes and mitigating heat buildup.
 3.  **Hysteresis and Decision Stability**: Switch rates across dynamic clips remained below 3.3% (exactly 1–2 model transition events on 60-frame clips), indicating high decision stability without flutter.
 4.  **Quantization Limitations on Light Networks**: INT8 dynamic quantization yields negligible quality degradation (42.70 dB similarity) but increases latency on FSRCNN due to dynamic tensor casting overhead, proving that quantization optimizations are best reserved for heavy parameters rather than ultra-lightweight hourglass backends.
+

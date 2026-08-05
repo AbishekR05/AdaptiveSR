@@ -60,3 +60,20 @@ Output:
 ```
 ======================= 32 passed, 2 warnings in 49.61s =======================
 ```
+
+---
+
+## 5. Interactive Verification Notebook
+
+To facilitate visual evaluation, you can run and view the dynamic preprocessing and telemetry analyzer inside Jupyter:
+👉 **[preprocessing.ipynb](file:///d:/Full%20Stack/AdaptiveSR/notebook/Phase1/preprocessing.ipynb)**
+
+### How to Run:
+Ensure you are using the registered kernel:
+```powershell
+# Execute the notebook programmatically to refresh cell outputs
+python -m jupyter nbconvert --to notebook --execute --ExecutePreprocessor.kernel_name=venv_kernel --inplace notebook/Phase1/preprocessing.ipynb
+```
+
+This registers 10 separate steps, rendering inline Canny edge masks, optical flow motion heatmaps, Local Binary Pattern texture maps, baseline PSNR/SSIM resizing degradation metrics, and temporal feature tracking curves relative to decision thresholds.
+
