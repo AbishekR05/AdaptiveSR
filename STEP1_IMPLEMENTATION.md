@@ -2,55 +2,74 @@
 
 This document describes the implementation of the source-side offline profiling pipeline (Step 1) for the AdaptiveSR project.
 
-The profiler processes a source video offline to extract metadata, segment it deterministically, analyze spatial and temporal visual characteristics, and export structured content profiles and integrity manifests.
+The profiler processes a source video offline to extract metadata, assign frames to chunks, analyze spatial and temporal visual characteristics continuously, and export structured content profiles and integrity manifests.
 
 ---
 
-## 1. Purpose & Core Goal
+## 1. Continuous Source Profiling & Temporal Continuity
 
-Step 1 acts as an **offline preprocessing step** at the content source. Before transmission or super-resolution scheduling starts, the profiler indexes the video to capture scene complexity and motion. This information is saved to a reproducible profile dataset, which later stages use to make optimal ABR (Adaptive Bitrate) and SR (Super-Resolution) decisions.
+In segment-based video analysis, treating each chunk as an independent video causes a systematic loss of temporal context at chunk boundaries. For example, to estimate motion for frame $t$, the system compares it against frame $t - N$. When a segment boundaries reset occurs, the first $N$ frames of every chunk $k$ cannot access context from chunk $k-1$, causing errors and underestimating motion.
 
----
-
-## 2. Reused & Adapted Legacy Components
-
-To preserve compatibility while improving robustness, we wrap and adapt the legacy `src/` modules:
-* **`VideoLoader`** ([`src/modules/video_loader.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/video_loader.py)): Reused to extract input metadata (width, height, FPS, frame count, codec) and analyze individual chunk segments.
-* **`FrameExtractor`** ([`src/modules/frame_extractor.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/frame_extractor.py)): Reused to sequentially iterate frames for each chunk file.
-* **`analyze_frame`** ([`src/modules/scene_analyzer.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/scene_analyzer.py)): Extracted visual metrics (edge density via Canny, texture density and blur clarity via Laplacian variance).
-* **`estimate_complexity`** ([`src/modules/complexity_estimator.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/complexity_estimator.py)): Reused to evaluate spatial complexity using weights loaded from the YAML config.
+To resolve this, Step 1 implements a **Continuous Profiling Pass**:
+* The profiler opens the original source video exactly once using OpenCV `cv2.VideoCapture` and parses all frames continuously from beginning to end.
+* The temporal motion comparison state (circular buffer of size $N$) is maintained globally across the entire video.
+* Chunk boundaries do **not** trigger a buffer reset.
+* Only the true beginning of the source video (the first $N$ frames of Chunk 0) lacks prior temporal context. Frame 0 of Chunk $k$ is correctly compared against frame $t-N$ belonging to Chunk $k-1$.
 
 ---
 
-## 3. Dynamic FPS & Temporal Motion Strategy
+## 2. Dynamic FPS & Constant Temporal Comparison Window
 
-The legacy motion comparison compares frame $t$ with frame $t-1$. At higher frame rates (60/120 FPS), the inter-frame time gap is smaller, which artificially reduces raw motion deltas.
+The temporal motion comparison compares frame $t$ with frame $t - N$. To ensure that motion metrics are comparable across 30, 60, and 120 FPS sources, the comparison frame offset $N$ scales dynamically based on parsed FPS:
+$$N = \max(1, \text{round}(\text{source\_fps} \times \text{motion\_temporal\_window\_seconds}))$$
 
-To make motion comparable across 30, 60, and 120 FPS sources, Step 1 implements a **constant temporal comparison window**:
-* The profiler compares frame $t$ with frame $t - N$, where:
-  $$N = \max(1, \text{round}(\text{source\_fps} \times \text{motion\_temporal\_window\_seconds}))$$
-* By default, `motion_temporal_window_seconds = 0.0333` ($\approx 1/30\text{ s}$), ensuring:
-  * **30 FPS**: $N = 1$ (compare frame $t$ with $t-1$)
-  * **60 FPS**: $N = 2$ (compare frame $t$ with $t-2$)
-  * **120 FPS**: $N = 4$ (compare frame $t$ with $t-4$)
-* We maintain a circular buffer of size $N$ to evaluate frame $t$ against frame $t - N$.
+By default, the temporal comparison window is configured to `0.0333` seconds ($\approx 1/30\text{ s}$), resulting in:
+* **30 FPS**: $N = 1$ (compare frame $t$ with $t-1$)
+* **60 FPS**: $N = 2$ (compare frame $t$ with $t-2$)
+* **120 FPS**: $N = 4$ (compare frame $t$ with $t-4$)
 
----
-
-## 4. Deterministic Chunking
-
-The video is physically segmented into chunks of `--chunk-duration` seconds using keyframe-aligned copy mode in FFmpeg:
-```powershell
-ffmpeg -y -i <input> -c copy -f segment -segment_time <duration> -reset_timestamps 1 <pattern>
-```
-* Slicing physically ensures that the frames analyzed are identical to the segments served to players.
-* The starting/ending frame indices, frame count, and actual durations are derived dynamically for each chunk by running `VideoLoader` on the generated chunk file.
+This practical normalization compares frames separated by approximately the same amount of real time.
 
 ---
 
-## 5. Aggregation Rules
+## 3. Timestamp-Based Chunk Bucketing
 
-To prevent short high-motion or high-complexity spikes from being hidden by averages, we store multiple statistics for each feature:
+After calculating per-frame metrics continuously, frames are mapped to their corresponding chunk boundaries using **Timestamp-Based/Frame Offset Bucketing**:
+1. We segment the video physically first using FFmpeg copy segmenting.
+2. We query each generated chunk file using OpenCV to discover its exact frame count and duration.
+3. This creates a list of deterministic start/end frame boundaries for each chunk.
+4. During the continuous profiling pass, a frame at index `idx` is assigned to chunk $k$ if:
+   $$\text{start\_frame}_k \le \text{idx} \le \text{end\_frame}_k$$
+5. Chunk aggregations are performed on the bucketed frame metrics belonging to that chunk. This ensures every frame belongs to exactly one chunk.
+
+---
+
+## 4. Target vs. Actual Chunk Duration (Hard Contract)
+
+Step 1 establishes a strict distinction between requested and actual segment metrics:
+* **`target_chunk_duration_seconds`**: The requested configuration target (e.g., `2.0` seconds).
+* **`chunk.duration_seconds`**: The **actual** logical profiling duration of that specific chunk.
+
+Because copy-codec FFmpeg (`-c copy`) segmenting must split videos at keyframe boundaries (IDR frames) to avoid re-encoding latency, chunk durations will vary slightly depending on keyframe distribution:
+* Chunk 0000: `2.000` s
+* Chunk 0001: `2.033` s
+* Chunk 0002: `1.967` s
+
+**Downstream consumers (buffer evolution calculators, transmission deadlines, and bitrate allocators) MUST use the per-chunk actual duration** (`chunk.duration_seconds`) rather than assuming a static target duration.
+
+---
+
+## 5. Reused & Adapted Legacy Components
+
+* **`VideoLoader`** ([`src/modules/video_loader.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/video_loader.py)): Reused to extract input metadata and inspect generated chunks.
+* **`FrameExtractor`** ([`src/modules/frame_extractor.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/frame_extractor.py)): Reused to load frames sequentially.
+* **`analyze_frame`** ([`src/modules/scene_analyzer.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/scene_analyzer.py)): Extracted visual metrics (edges, texture, blur clarity).
+* **`estimate_complexity`** ([`src/modules/complexity_estimator.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/complexity_estimator.py)): Reused to calculate spatial complexity.
+
+---
+
+## 6. Aggregation Rules
+
 * **Motion**: `mean`, `p95` (95th percentile), and `max`.
 * **Spatial Complexity**: `mean`, `p95`, and `max`.
 * **Texture Density**: `mean` and `p95`.
@@ -61,10 +80,9 @@ Aggregations are computed using `numpy.percentile` for numerical correctness.
 
 ---
 
-## 6. Dataset Schema & Manifest Structure
+## 7. Dataset Schema & Manifest Structure
 
 ### Content Profile JSON (`data/profiles/{video_id}_profile.json`)
-Contains schemas versioning, source video properties, profiler configurations, and the chunk-by-chunk metrics list. File hashes are excluded to prevent data clutter:
 ```json
 {
     "schema_version": "1.0.0",
@@ -112,7 +130,6 @@ Contains schemas versioning, source video properties, profiler configurations, a
 ```
 
 ### Integrity Manifest JSON (`data/manifests/{video_id}_manifest.json`)
-Maintains repeatability and verification mapping, linking file hashes for the source video and each individual segment:
 ```json
 {
     "schema_version": "1.0.0",
@@ -132,19 +149,13 @@ Maintains repeatability and verification mapping, linking file hashes for the so
 
 ---
 
-## 7. Data Leakage Rules
+## 8. Data Leakage Rules
 
-To prevent information leakage, the source profiler is **strictly prohibited** from referencing:
-* Output quality metrics (PSNR, SSIM, LPIPS, VMAF).
-* Runtime Edge Server loads (CPU, GPU, VRAM).
-* Network state (RTT, bandwidth, chunk fetch times).
-* Future scheduling decisions or playback stall results.
+The source profiler is **strictly prohibited** from referencing output quality metrics (PSNR, SSIM, LPIPS, VMAF) or Edge runtime load metrics (telemetry, RTT, cache hit status). These are deferred to later evaluation stages.
 
 ---
 
-## 8. CLI Usage
-
-Generate video profile and segment files using the command line:
+## 9. CLI Usage
 
 ```powershell
 python -m adaptive_sr.profiling.profile_video \
@@ -153,30 +164,20 @@ python -m adaptive_sr.profiling.profile_video \
     --chunk-duration 2.0
 ```
 
-* `--input` (required): Source video file.
-* `--output` (required): Output directory.
-* `--chunk-duration` (optional): Duration per segment in seconds (default `2.0`).
-* `--motion-temporal-window` (optional): Real-time temporal window for frame comparisons in seconds (default `0.0333`).
-
 ---
 
-## 9. Test Verification
+## 10. Automated Tests
 
-Automated tests are located in [`tests/test_profiling.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_profiling.py).
-Run the suite with:
+Run tests using:
 ```powershell
 python -m pytest tests/test_foundation.py tests/test_profiling.py -v
 ```
 
 This verifies:
-1. Video metadata extraction accuracy.
+1. Video metadata extraction.
 2. Deterministic chunk boundaries.
-3. Proper chunk timings and frame offsets at 30, 60, and 120 FPS.
-4. Correct percentile and max aggregations.
-5. Strict schema conformity and data-leakage protection.
-
----
-
-## 10. Known Limitations
-
-* **Keyframe Dependency**: Slicing using FFmpeg copy mode (`-c copy`) splits the video at the closest preceding keyframe. If keyframe intervals in the source are not perfectly uniform, chunk boundaries may deviate slightly from the target duration (e.g. 2.05s instead of 2.0s). However, our profiling dynamically recalculates chunk frame counts and durations on the actual output chunks to maintain consistency.
+3. 30/60/120 FPS frame counts and comparison offsets.
+4. Numerical percentile aggregation.
+5. Repeatability and schema completeness.
+6. Temporal continuity across segment boundaries.
+7. Insulated data-leakage protection.

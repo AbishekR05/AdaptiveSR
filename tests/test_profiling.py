@@ -11,7 +11,7 @@ from unittest.mock import patch
 # Ensure root is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from adaptive_sr.profiling.profile_video import run_profiler, get_file_sha256, profile_chunk
+from adaptive_sr.profiling.profile_video import run_profiler, get_file_sha256
 from src.modules.video_loader import VideoLoader
 
 def generate_synthetic_video(path: Path, fps: int, duration_seconds: float = 2.2):
@@ -229,3 +229,51 @@ def test_data_leakage_protection(temp_test_dir):
     for term in leakage_terms:
         assert term not in profile_content
         assert term.lower() not in profile_content
+
+def test_temporal_continuity(temp_test_dir):
+    """
+    Verifies that temporal continuity is maintained across chunk boundaries.
+    Constructs a video of 3.0 seconds (90 frames) that is completely static, 
+    except for a change at Frame 60 (the first frame of Chunk 1).
+    Under continuous profiling, Chunk 1 must detect this motion because it 
+    has access to the context of Frame 59 (from Chunk 0).
+    """
+    video_path = temp_test_dir / "continuity_test.mp4"
+    w, h = 320, 240
+    fps = 30
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(video_path), fourcc, fps, (w, h))
+    
+    # Generate 90 frames (3.0 seconds)
+    for i in range(90):
+        frame = np.zeros((h, w, 3), dtype=np.uint8)
+        if i >= 60:
+            # Change frame content from black to a white rectangle starting at Frame 60
+            cv2.rectangle(frame, (50, 50), (100, 100), (255, 255, 255), -1)
+        out.write(frame)
+    out.release()
+    
+    out_dir = temp_test_dir / "out_continuity"
+    profile_path, _ = run_profiler(
+        input_video=str(video_path),
+        output_dir=str(out_dir),
+        chunk_duration=2.0,  # Split at exactly 2.0s (Frame 60)
+        temporal_window_s=0.0333  # N = 1 frame
+    )
+    
+    with open(profile_path, "r", encoding="utf-8") as f:
+        profile = json.load(f)
+        
+    assert len(profile["chunks"]) == 2
+    
+    # Chunk 0: frame 0 to 59 (all black). Motion should be 0.0
+    chunk0 = profile["chunks"][0]
+    assert chunk0["motion"]["max"] == pytest.approx(0.0)
+    
+    # Chunk 1: frame 60 to 89. 
+    # Frame 60 is compared with Frame 59 (which is black, while Frame 60 has the white rect).
+    # Therefore, motion for Frame 60 should be > 0.0, resulting in max motion > 0.0.
+    # If the buffer had reset at the chunk boundary, motion for Frame 60 would be 0.0 (loss of context).
+    chunk1 = profile["chunks"][1]
+    assert chunk1["motion"]["max"] > 0.0  # Proves temporal continuity is maintained!
+

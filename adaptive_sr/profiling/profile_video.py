@@ -67,33 +67,66 @@ def segment_video(input_path: str, output_dir: str, chunk_duration: float, video
     
     return chunk_files
 
-def profile_chunk(chunk_path: str, chunk_idx: int, temporal_window_s: float, fps: float) -> dict:
+def run_profiler(input_video: str, output_dir: str, chunk_duration: float, temporal_window_s: float):
     """
-    Profiles an individual physical chunk file.
-    Uses the temporal comparison window frames = round(fps * temporal_window_s) for motion logic.
+    Runs the video profiler pipeline.
+    Performs a continuous profiling pass on the source video to maintain temporal continuity
+    across chunk boundaries, and assigns frame metrics using cumulative frame offset buckets.
     """
-    loader = VideoLoader(chunk_path)
+    logger.info(f"Initializing continuous profiler on: {input_video}")
+    loader = VideoLoader(input_video)
     meta = loader.get_metadata()
     
-    extractor = FrameExtractor(chunk_path)
+    video_id = os.path.splitext(os.path.basename(input_video))[0]
+    source_hash = get_file_sha256(input_video)
     
-    # Calculate N frame offset for the motion comparison
+    # 1. Segment the video physically using copy-mode FFmpeg to define dynamic keyframe boundaries
+    logger.info(f"Segmenting video into chunks of target {chunk_duration} seconds...")
+    chunk_files = segment_video(input_video, output_dir, chunk_duration, video_id)
+    
+    # 2. Extract exact metadata from each physical chunk file to align boundaries deterministically
+    chunk_boundaries = []
+    running_time = 0.0
+    running_frame = 0
+    for idx, chunk_path in enumerate(chunk_files):
+        chunk_loader = VideoLoader(chunk_path)
+        chunk_meta = chunk_loader.get_metadata()
+        chunk_dur = chunk_meta["duration"]
+        chunk_frame_count = chunk_meta["frame_count"]
+        
+        chunk_id_str = f"{idx:04d}"
+        chunk_boundaries.append({
+            "chunk_id": chunk_id_str,
+            "start_time_seconds": running_time,
+            "end_time_seconds": running_time + chunk_dur,
+            "duration_seconds": chunk_dur,
+            "start_frame": running_frame,
+            "end_frame": running_frame + chunk_frame_count - 1 if chunk_frame_count > 0 else running_frame,
+            "frame_count": chunk_frame_count,
+            "file_path": chunk_path,
+            "file_hash": get_file_sha256(chunk_path)
+        })
+        
+        running_time += chunk_dur
+        running_frame += chunk_frame_count
+
+    # 3. Continuous Profiling Pass
+    # Pre-allocate buckets for each chunk
+    chunk_buckets = {boundary["chunk_id"]: [] for boundary in chunk_boundaries}
+    
+    # Setup temporal comparison offset N = round(fps * temporal_window_s)
+    fps = meta["fps"]
     temporal_offset = max(1, int(round(fps * temporal_window_s)))
-    logger.info(f"Profiling chunk {chunk_idx:04d} with temporal offset N={temporal_offset} frames (FPS={fps:.2f})")
+    logger.info(f"Continuous profiling pass starting. Temporal comparison frame offset N={temporal_offset} (FPS={fps:.2f})")
     
-    # Circular buffer to store recent frames
+    # Circular buffer to store recent frames across the entire source video
     frame_buffer = deque(maxlen=temporal_offset + 1)
-    
-    motions = []
-    textures = []
-    edges = []
-    blurs = []
-    complexities = []
+    extractor = FrameExtractor(input_video)
     
     for idx, ts_ms, frame in extractor.extract():
         frame_buffer.append(frame)
         
-        # If we do not have enough frames in buffer yet, comparison is against None (motion=0.0)
+        # If N frames have not been observed yet, comparison frame is None (motion=0.0)
         if len(frame_buffer) <= temporal_offset:
             prev_frame = None
         else:
@@ -102,97 +135,84 @@ def profile_chunk(chunk_path: str, chunk_idx: int, temporal_window_s: float, fps
         metrics = analyze_frame(frame, prev_frame)
         complexity = estimate_complexity(metrics)
         
-        motions.append(metrics["motion"])
-        textures.append(metrics["texture"])
-        edges.append(metrics["edges"])
-        blurs.append(metrics["blur_clarity"])
-        complexities.append(complexity)
-        
-    if not complexities:
-        # Fallback if empty chunk
-        return {
-            "frame_count": 0,
-            "motion": {"mean": 0.0, "p95": 0.0, "max": 0.0},
-            "texture": {"mean": 0.0, "p95": 0.0},
-            "edges": {"mean": 0.0, "p95": 0.0},
-            "blur": {"mean": 0.0, "p95": 0.0},
-            "complexity": {"mean": 0.0, "p95": 0.0, "max": 0.0}
-        }
-        
-    # Helper to calculate mean, p95, and max
-    def calc_stats(vals):
-        arr = np.array(vals)
-        return {
-            "mean": float(np.mean(arr)),
-            "p95": float(np.percentile(arr, 95)),
-            "max": float(np.max(arr))
-        }
-        
-    motion_stats = calc_stats(motions)
-    texture_stats = calc_stats(textures)
-    edge_stats = calc_stats(edges)
-    blur_stats = calc_stats(blurs)
-    complexity_stats = calc_stats(complexities)
-    
-    return {
-        "frame_count": len(complexities),
-        "motion": motion_stats,
-        "texture_density": {
-            "mean": texture_stats["mean"],
-            "p95": texture_stats["p95"]
-        },
-        "edge_density": {
-            "mean": edge_stats["mean"],
-            "p95": edge_stats["p95"]
-        },
-        "blur": {
-            "mean": blur_stats["mean"],
-            "p95": blur_stats["p95"]
-        },
-        "spatial_complexity": complexity_stats
-    }
+        # Bucket assignment by frame range
+        assigned_chunk_id = None
+        for boundary in chunk_boundaries:
+            if boundary["start_frame"] <= idx <= boundary["end_frame"]:
+                assigned_chunk_id = boundary["chunk_id"]
+                break
+                
+        # Fallback to prevent edge-case frame dropping
+        if assigned_chunk_id is None and chunk_boundaries:
+            assigned_chunk_id = chunk_boundaries[-1]["chunk_id"]
+            
+        if assigned_chunk_id is not None:
+            chunk_buckets[assigned_chunk_id].append({
+                "motion": metrics["motion"],
+                "texture": metrics["texture"],
+                "edges": metrics["edges"],
+                "blur": metrics["blur_clarity"],
+                "complexity": complexity
+            })
 
-def run_profiler(input_video: str, output_dir: str, chunk_duration: float, temporal_window_s: float):
-    logger.info(f"Initializing profiler on: {input_video}")
-    loader = VideoLoader(input_video)
-    meta = loader.get_metadata()
-    
-    video_id = os.path.splitext(os.path.basename(input_video))[0]
-    source_hash = get_file_sha256(input_video)
-    
-    # 1. Segment the video physically
-    logger.info(f"Segmenting video into chunks of {chunk_duration} seconds...")
-    chunk_files = segment_video(input_video, output_dir, chunk_duration, video_id)
-    
+    # 4. Perform chunk aggregations (mean, p95, max)
     chunks_profile_list = []
     chunks_manifest_list = []
     
-    running_time = 0.0
-    running_frame = 0
-    
-    # 2. Profile each segment
-    for idx, chunk_path in enumerate(chunk_files):
-        logger.info(f"Processing chunk {idx}: {chunk_path}")
-        chunk_metrics = profile_chunk(chunk_path, idx, temporal_window_s, meta["fps"])
-        chunk_hash = get_file_sha256(chunk_path)
+    for boundary in chunk_boundaries:
+        chunk_id_str = boundary["chunk_id"]
+        bucket = chunk_buckets[chunk_id_str]
         
-        # Read exact segment duration and frame count
-        chunk_loader = VideoLoader(chunk_path)
-        chunk_meta = chunk_loader.get_metadata()
-        
-        chunk_frame_count = chunk_metrics["frame_count"]
-        chunk_dur = chunk_meta["duration"]
-        
-        chunk_id_str = f"{idx:04d}"
-        
+        if not bucket:
+            # Fallback if empty bucket
+            chunk_metrics = {
+                "motion": {"mean": 0.0, "p95": 0.0, "max": 0.0},
+                "texture_density": {"mean": 0.0, "p95": 0.0},
+                "edge_density": {"mean": 0.0, "p95": 0.0},
+                "blur": {"mean": 0.0, "p95": 0.0},
+                "spatial_complexity": {"mean": 0.0, "p95": 0.0, "max": 0.0}
+            }
+        else:
+            def calc_stats(key):
+                vals = [f[key] for f in bucket]
+                arr = np.array(vals)
+                return {
+                    "mean": float(np.mean(arr)),
+                    "p95": float(np.percentile(arr, 95)),
+                    "max": float(np.max(arr))
+                }
+                
+            motion_stats = calc_stats("motion")
+            texture_stats = calc_stats("texture")
+            edge_stats = calc_stats("edges")
+            blur_stats = calc_stats("blur")
+            complexity_stats = calc_stats("complexity")
+            
+            chunk_metrics = {
+                "motion": motion_stats,
+                "texture_density": {
+                    "mean": texture_stats["mean"],
+                    "p95": texture_stats["p95"]
+                },
+                "edge_density": {
+                    "mean": edge_stats["mean"],
+                    "p95": edge_stats["p95"]
+                },
+                "blur": {
+                    "mean": blur_stats["mean"],
+                    "p95": blur_stats["p95"]
+                },
+                "spatial_complexity": complexity_stats
+            }
+            
         chunks_profile_list.append({
             "chunk_id": chunk_id_str,
-            "start_time_seconds": running_time,
-            "end_time_seconds": running_time + chunk_dur,
-            "duration_seconds": chunk_dur,
-            "start_frame": running_frame,
-            "end_frame": running_frame + chunk_frame_count - 1 if chunk_frame_count > 0 else running_frame,
-            "frame_count": chunk_frame_count,
+            "start_time_seconds": boundary["start_time_seconds"],
+            "end_time_seconds": boundary["end_time_seconds"],
+            "duration_seconds": boundary["duration_seconds"],
+            "start_frame": boundary["start_frame"],
+            "end_frame": boundary["end_frame"],
+            "frame_count": boundary["frame_count"],
             "motion": chunk_metrics["motion"],
             "texture_density": chunk_metrics["texture_density"],
             "edge_density": chunk_metrics["edge_density"],
@@ -202,14 +222,11 @@ def run_profiler(input_video: str, output_dir: str, chunk_duration: float, tempo
         
         chunks_manifest_list.append({
             "chunk_id": chunk_id_str,
-            "file_path": os.path.relpath(chunk_path, output_dir),
-            "file_hash": chunk_hash
+            "file_path": os.path.relpath(boundary["file_path"], output_dir),
+            "file_hash": boundary["file_hash"]
         })
         
-        running_time += chunk_dur
-        running_frame += chunk_frame_count
-        
-    # 3. Compile output structures
+    # 5. Compile output structures
     content_profile = {
         "schema_version": "1.0.0",
         "video_id": video_id,
@@ -221,8 +238,8 @@ def run_profiler(input_video: str, output_dir: str, chunk_duration: float, tempo
             "height": meta["height"],
             "frame_count": meta["frame_count"],
             "codec": meta["codec"],
-            "pixel_format": None,  # Optional placeholder
-            "bitrate": None,       # Optional placeholder
+            "pixel_format": None,
+            "bitrate": None,
             "has_audio": meta["has_audio"]
         },
         "profiling_config": {
