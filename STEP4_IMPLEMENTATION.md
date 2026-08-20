@@ -16,18 +16,32 @@ Step 4 establishes the resource telemetry foundation required by the AdaptiveSR 
 
 ## 2. Resource Monitoring Architecture
 
+### Step 4.1 — Dual-Level Monitoring
+
+Step 4.1 introduces two distinct monitoring layers:
+
 ```
-ResourceMonitor(cluster_id, edge_id, sampling_interval_seconds)
-        │
-        │  .snapshot(active_requests, queue_depth)
-        ▼
-     psutil
-      ├── cpu_percent()        → cpu_utilization
-      ├── cpu_count(logical)   → cpu_cores_total
-      └── virtual_memory()     → memory_total_bytes, memory_used_bytes
-        │
-        ▼
-  EdgeResourceTelemetry  (Pydantic model in schemas.py)
+┌─────────────────────────────────────────────────┐
+│  HOST-LEVEL (ResourceMonitor)                    │
+│  "How busy is the Edge compute environment?"     │
+│                                                  │
+│  .snapshot()  →  EdgeResourceTelemetry           │
+│  .per_core_utilization()  →  List[float]         │
+│                                                  │
+│  psutil.cpu_percent()       host-wide CPU %      │
+│  psutil.cpu_count()         logical core count   │
+│  psutil.virtual_memory()    host RAM             │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│  PROCESS-LEVEL (ProcessMonitor)                  │
+│  "How much CPU does THIS process consume?"       │
+│                                                  │
+│  .snapshot(interval)  →  ProcessResourceSnapshot │
+│                                                  │
+│  psutil.Process.cpu_percent()   per-process CPU  │
+│  psutil.Process.memory_info()   per-process RSS  │
+└─────────────────────────────────────────────────┘
 ```
 
 The monitor is a **pure measurement object**. The Edge service calls `monitor.snapshot()` and receives a fully populated telemetry record. All OS-specific measurement logic is isolated inside `ResourceMonitor` — the Edge request handler does not call `psutil` directly.
@@ -37,8 +51,8 @@ The monitor is a **pure measurement object**. The Edge service calls `monitor.sn
 | File | Purpose |
 |------|---------|
 | `adaptive_sr/monitoring/__init__.py` | Package init |
-| `adaptive_sr/monitoring/resource_monitor.py` | `ResourceMonitor` class |
-| `adaptive_sr/shared/schemas.py` | `EdgeResourceTelemetry` Pydantic model |
+| `adaptive_sr/monitoring/resource_monitor.py` | `ResourceMonitor` (host-level) + `ProcessMonitor` (process-level) |
+| `adaptive_sr/shared/schemas.py` | `EdgeResourceTelemetry` + `ProcessResourceSnapshot` Pydantic models |
 
 ---
 
@@ -69,26 +83,20 @@ Logical cores include hyperthreaded virtual cores. This reflects the CPU paralle
 
 ### `cpu_cores_available`
 
-**Definition**: An estimate of the number of logical CPU cores not currently consumed by observed workloads.
+**Definition**: An **observational estimate** of logical CPU cores not currently consumed by observed workloads.
 
-**Formula**:
-```
-cpu_cores_available = max(0, cpu_cores_total × (1 − cpu_utilization / 100))
-```
+**Formula**: `max(0, cpu_cores_total × (1 − cpu_utilization / 100))`
 
-**Semantics and Limitations**:
-
-> [!WARNING]
-> `cpu_cores_available` is an **estimation based on observed utilization**, NOT an OS-level resource reservation.
+> [!CAUTION]
+> **`cpu_cores_available` is an OBSERVATIONAL ESTIMATE ONLY.**
 >
-> - The Step 4 Edge implementation has no resource reservation mechanism.
-> - "Available" means "not currently accounted for by observed system-wide CPU utilization."
-> - It does NOT mean that these cores are reserved or guaranteed for a specific workload.
-> - At 50% utilization on an 8-core machine, `cpu_cores_available = 4.0` — but this does not mean exactly 4 cores are free for SR work. OS scheduling, kernel threads, and other processes also consume CPU time.
+> - It is derived from host-wide CPU utilization, which includes ALL processes on the machine (Cloud, Edge, Client, network emulation, OS services, tests, etc.).
+> - It does NOT represent physically allocatable or reserved cores.
+> - It MUST NOT be consumed as a scheduler allocation quantity.
+> - A value of 7.0 on an 8-core machine does NOT mean 7 cores are free for SR.
+> - Step 4 has no OS-level core reservation mechanism.
 
-This is a **monitoring metric**, not yet a resource allocator. A proper core reservation mechanism belongs to a later step.
-
-**CPU = PRIMARY resource dimension for AdaptiveSR** (paper-faithful).
+This is a monitoring metric. A proper core reservation mechanism belongs to a later step.
 
 ---
 
@@ -248,5 +256,75 @@ Memory utilization = 8,730,419,200 / 17,179,869,184 × 100 ≈ 50.82%
 | Step 1 | Video profiling | Independent |
 | Step 2 | Representation chunking | Independent |
 | Step 3 | Network measurement + emulation | `NetworkMeasurement` kept separate |
-| **Step 4** | **Edge resource observability** | Foundation for Steps 5+ |
-| Step 5+ | SR benchmarking, scheduling, allocation | Will consume `EdgeResourceTelemetry` |
+| **Step 4 / 4.1** | **Edge resource observability (host + process level)** | Foundation for Steps 5+ |
+| Step 5+ | SR benchmarking, scheduling, allocation | Will use both `EdgeResourceTelemetry` and `ProcessResourceSnapshot` |
+
+---
+
+## 16. Host-Level vs Process-Level Resource Measurements
+
+This section documents the fundamental distinction between the two monitoring layers introduced in Step 4.1.
+
+### What each layer measures
+
+| Layer | Class | Schema | Answers |
+|-------|-------|--------|---------|
+| Host-level | `ResourceMonitor` | `EdgeResourceTelemetry` | "How busy is the Edge compute environment?" |
+| Process-level | `ProcessMonitor` | `ProcessResourceSnapshot` | "How much CPU and RAM does this specific process consume?" |
+
+### Why they are different
+
+The development machine runs multiple concurrent processes:
+- Cloud service
+- Edge service
+- Client service
+- Network emulation
+- Tests
+- OS services
+
+Host-wide `cpu_utilization` aggregates ALL of these. It is therefore a poor proxy for the resource consumption of any individual workload.
+
+**Example**:
+
+```
+Host cpu_utilization = 60%
+```
+
+This does **NOT** mean:
+- SR is using 60% CPU
+- SR is using 4.8 cores (`8 × 0.6 = 4.8`)
+- Any specific process is responsible for 60% of load
+
+**Correct measurement for SR benchmarking**:
+
+```
+ProcessMonitor(pid=sr_process_pid).snapshot(interval=0.5)
+→ ProcessResourceSnapshot.cpu_percent = 320.0
+→ Interpretation: SR is using ≈ 3.2 logical cores worth of CPU time
+```
+
+### Step 5 Contract
+
+> [!IMPORTANT]
+> **Step 5 SR benchmarking MUST use `ProcessMonitor` (process-level CPU measurements) to characterize SR workload resource consumption.**
+>
+> Host-wide `cpu_utilization` from `EdgeResourceTelemetry` MUST NOT be interpreted as the CPU consumption of the SR workload.
+>
+> The `cpu_cores_available` field from `EdgeResourceTelemetry` MUST NOT be used as the basis for SR scheduler decisions — it is an observational estimate derived from host-wide utilization, not a per-process measurement.
+
+### `cpu_percent` semantics in `ProcessResourceSnapshot`
+
+psutil `Process.cpu_percent()` returns a percentage of **one logical CPU core**:
+
+| cpu_percent value | Interpretation |
+|------------------|----------------|
+| 0–100% | Process using 0–1 logical core |
+| 100–200% | Process using 1–2 logical cores (multi-threaded) |
+| 320% | Process using ≈ 3.2 logical cores |
+| > 100 × N cores | Physically impossible; would indicate measurement error |
+
+Values above 100% are normal and expected for multi-threaded SR workloads.
+
+### Per-Core Utilization
+
+`ResourceMonitor.per_core_utilization()` exposes per-logical-core CPU utilization via `psutil.cpu_percent(percpu=True)`. This is an **observational** capability provided to allow future reasoning about uneven CPU loading (e.g., detecting whether SR threads concentrate on specific cores). It is NOT a scheduler feature and does not allocate or reserve cores.

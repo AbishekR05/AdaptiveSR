@@ -420,10 +420,72 @@ class EdgeResourceTelemetry(BaseModel):
     cluster_id: str
     edge_id: str
     cpu_cores_total: int
-    cpu_utilization: float          # [0, 100]
-    cpu_cores_available: float      # Estimated; see field docstring
+    cpu_utilization: float          # [0, 100] host-wide
+    cpu_cores_available: float      # OBSERVATIONAL ESTIMATE ONLY — see field docstring.
+                                    # Must NOT be consumed as a scheduler allocation quantity.
+                                    # Formula: cpu_cores_total × (1 − cpu_utilization / 100)
     memory_total_bytes: int
     memory_used_bytes: int
     memory_utilization: float       # [0, 100]
     active_requests: int
     queue_depth: int
+
+
+class ProcessResourceSnapshot(BaseModel):
+    """Step 4.1 — Process-Level Resource Snapshot.
+
+    Represents a point-in-time measurement of CPU and memory usage for a
+    specific OS process, identified by PID.
+
+    DESIGN RATIONALE
+    ----------------
+    EdgeResourceTelemetry reports HOST-LEVEL resource state:
+        "How busy is the Edge compute environment?"
+
+    ProcessResourceSnapshot reports PROCESS-LEVEL resource state:
+        "How much CPU and RAM does this specific process consume?"
+
+    These are DIFFERENT quantities.  A host-wide CPU utilization of 60%
+    does NOT imply that any particular process is consuming 60% of CPU.
+    On a multi-process machine (Cloud + Edge + Client + emulation all
+    co-located), host-wide CPU is a poor proxy for any individual workload.
+
+    STEP 5 CONTRACT
+    ---------------
+    Step 5 SR benchmarking MUST use process-level CPU measurements
+    (via ProcessResourceSnapshot) to characterize SR workload resource
+    consumption.  Host-wide cpu_utilization from EdgeResourceTelemetry
+    MUST NOT be used as a proxy for SR CPU consumption.
+
+    FIELDS
+    ------
+    timestamp : str
+        ISO-8601 UTC timestamp of the snapshot.
+
+    process_id : int
+        OS process identifier (PID) of the measured process.
+
+    process_name : str
+        Human-readable name of the process (psutil.Process.name()).
+
+    cpu_percent : float
+        CPU utilization of this process expressed as a percentage of ONE
+        logical CPU core.  Values > 100 are possible on multi-core systems
+        when a process uses multiple threads (e.g. 350% = 3.5 cores used).
+        Source: psutil.Process.cpu_percent(interval=...).
+        This is NOT the same as host-wide cpu_utilization.
+
+    memory_used_bytes : int
+        Resident Set Size (RSS) — physical RAM currently held by this
+        process (psutil.Process.memory_info().rss).
+
+    memory_percent : float
+        Process RSS as a percentage of total physical RAM.
+        Source: psutil.Process.memory_percent().
+    """
+    timestamp: str
+    process_id: int
+    process_name: str
+    cpu_percent: float          # % of one logical core; >100 = multi-threaded
+    memory_used_bytes: int      # RSS in bytes
+    memory_percent: float       # RSS / total RAM × 100

@@ -1,7 +1,7 @@
 """
 tests/test_resource_monitor.py
 ================================
-Step 4 — Edge Resource Monitoring tests.
+Step 4 / Step 4.1 — Edge Resource Monitoring tests.
 
 All tests use real system measurements from psutil.
 No exact CPU/memory utilization values are asserted —
@@ -18,8 +18,12 @@ import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from adaptive_sr.monitoring.resource_monitor import ResourceMonitor
-from adaptive_sr.shared.schemas import EdgeResourceTelemetry, NetworkMeasurement
+from adaptive_sr.monitoring.resource_monitor import ResourceMonitor, ProcessMonitor
+from adaptive_sr.shared.schemas import (
+    EdgeResourceTelemetry,
+    ProcessResourceSnapshot,
+    NetworkMeasurement,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -319,3 +323,199 @@ def test_snapshot_serializable(snapshot):
     assert "memory_total_bytes" in d
     assert "active_requests" in d
     assert "queue_depth" in d
+
+
+# ===========================================================================
+# STEP 4.1 — PROCESS-LEVEL MONITORING TESTS
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# 17. ProcessMonitor initializes for the current process
+# ---------------------------------------------------------------------------
+
+def test_process_monitor_initializes_for_current_process():
+    """ProcessMonitor() with no PID must attach to the current process."""
+    import os as _os
+    pm = ProcessMonitor()
+    assert pm.pid == _os.getpid()
+
+
+# ---------------------------------------------------------------------------
+# 18. snapshot() returns a ProcessResourceSnapshot
+# ---------------------------------------------------------------------------
+
+def test_process_monitor_snapshot_returns_correct_type():
+    """ProcessMonitor.snapshot() must return a ProcessResourceSnapshot."""
+    pm = ProcessMonitor()
+    snap = pm.snapshot(interval=0.05)
+    assert isinstance(snap, ProcessResourceSnapshot)
+
+
+# ---------------------------------------------------------------------------
+# 19. Snapshot PID matches monitored process
+# ---------------------------------------------------------------------------
+
+def test_process_snapshot_pid_matches():
+    """process_id in snapshot must match the monitored process PID."""
+    import os as _os
+    pm = ProcessMonitor()
+    snap = pm.snapshot(interval=0.05)
+    assert snap.process_id == _os.getpid()
+
+
+# ---------------------------------------------------------------------------
+# 20. Process cpu_percent is non-negative (invariant, no exact value)
+# ---------------------------------------------------------------------------
+
+def test_process_cpu_percent_non_negative():
+    """cpu_percent must be >= 0. Values >100 are valid on multi-core systems."""
+    pm = ProcessMonitor()
+    snap = pm.snapshot(interval=0.1)
+    assert snap.cpu_percent >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# 21. Process memory fields are consistent
+# ---------------------------------------------------------------------------
+
+def test_process_memory_fields_consistent():
+    """memory_used_bytes must be > 0 and memory_percent must be in (0, 100]."""
+    pm = ProcessMonitor()
+    snap = pm.snapshot(interval=0.05)
+    assert snap.memory_used_bytes > 0, "Process must hold at least some RAM"
+    assert 0.0 < snap.memory_percent <= 100.0
+
+
+# ---------------------------------------------------------------------------
+# 22. Snapshot timestamp is timezone-aware UTC
+# ---------------------------------------------------------------------------
+
+def test_process_snapshot_timestamp_utc():
+    """ProcessResourceSnapshot timestamp must end with 'Z'."""
+    pm = ProcessMonitor()
+    snap = pm.snapshot(interval=0.05)
+    assert snap.timestamp.endswith("Z"), (
+        f"Process snapshot timestamp must be UTC: {snap.timestamp!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 23. Host-level and process-level are distinct schema types
+# ---------------------------------------------------------------------------
+
+def test_host_and_process_snapshots_are_distinct_types():
+    """EdgeResourceTelemetry and ProcessResourceSnapshot must be different types."""
+    host_monitor = ResourceMonitor(cluster_id="c", edge_id="e")
+    proc_monitor = ProcessMonitor()
+
+    host_snap = host_monitor.snapshot()
+    proc_snap = proc_monitor.snapshot(interval=0.05)
+
+    assert isinstance(host_snap, EdgeResourceTelemetry)
+    assert isinstance(proc_snap, ProcessResourceSnapshot)
+    assert not isinstance(host_snap, ProcessResourceSnapshot)
+    assert not isinstance(proc_snap, EdgeResourceTelemetry)
+
+
+# ---------------------------------------------------------------------------
+# 24. Host cpu_utilization != process cpu_percent (semantically different)
+# ---------------------------------------------------------------------------
+
+def test_host_cpu_utilization_distinct_from_process_cpu_percent():
+    """Verify the host-vs-process distinction: different fields, different semantics.
+
+    Host cpu_utilization = system-wide average across all cores.
+    Process cpu_percent  = this process's CPU as % of ONE logical core.
+    These are different quantities and must not be conflated.
+    """
+    host_monitor = ResourceMonitor(cluster_id="c", edge_id="e")
+    proc_monitor = ProcessMonitor()
+
+    host_snap = host_monitor.snapshot()
+    proc_snap = proc_monitor.snapshot(interval=0.1)
+
+    # Both must be non-negative — but there is no requirement that they match
+    assert host_snap.cpu_utilization >= 0.0
+    assert proc_snap.cpu_percent >= 0.0
+
+    # Confirm they are from different schemas (semantic guard)
+    assert hasattr(host_snap, 'cpu_cores_total')     # host-only field
+    assert hasattr(proc_snap, 'process_id')           # process-only field
+    assert not hasattr(proc_snap, 'cpu_cores_total')
+    assert not hasattr(host_snap, 'process_id')
+
+
+# ---------------------------------------------------------------------------
+# 25. Process monitor measures bounded CPU load workload
+# ---------------------------------------------------------------------------
+
+def _proc_cpu_burner(stop_event: threading.Event):
+    """Tight loop for bounded CPU load — for process monitoring tests only."""
+    while not stop_event.is_set():
+        _ = sum(math.sqrt(i) for i in range(5000))
+
+
+def test_process_monitor_measures_cpu_load():
+    """ProcessMonitor must produce a non-negative cpu_percent under CPU load.
+
+    This test creates a bounded CPU workload using Python threads, measures
+    the current process's CPU consumption during that period, then cleanly
+    terminates the workload.
+
+    SR, ML, or CUDA are NOT used. This is purely for validating the monitor.
+    Exact CPU percentages are not asserted — only invariants.
+    """
+    pm = ProcessMonitor()  # monitors current process
+
+    # ── Start bounded workload ────────────────────────────────────────
+    stop_event = threading.Event()
+    n_threads = 2
+    threads = [
+        threading.Thread(target=_proc_cpu_burner, args=(stop_event,), daemon=True)
+        for _ in range(n_threads)
+    ]
+    for t in threads:
+        t.start()
+
+    time.sleep(0.3)  # Let load register
+
+    # ── Measure under load ────────────────────────────────────────────
+    snap = pm.snapshot(interval=0.2)
+
+    # ── Stop workload (clean up ALL spawned threads) ──────────────────
+    stop_event.set()
+    for t in threads:
+        t.join(timeout=2.0)
+    for t in threads:
+        assert not t.is_alive(), "Burner thread must have terminated"
+
+    # ── Invariant checks (no exact value assertions) ──────────────────
+    assert snap.cpu_percent >= 0.0, "cpu_percent must be non-negative"
+    assert snap.memory_used_bytes > 0
+    assert isinstance(snap, ProcessResourceSnapshot)
+
+    print(
+        f"\n[process_load_test] cpu_percent={snap.cpu_percent:.1f}% "
+        f"memory_used_bytes={snap.memory_used_bytes:,} "
+        f"pid={snap.process_id}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 26. Per-core utilization returns one value per logical CPU
+# ---------------------------------------------------------------------------
+
+def test_per_core_utilization_length_and_range():
+    """per_core_utilization() must return one float per logical CPU core."""
+    import psutil
+    monitor = ResourceMonitor(cluster_id="c", edge_id="e")
+    per_core = monitor.per_core_utilization()
+
+    n_logical = psutil.cpu_count(logical=True)
+    assert len(per_core) == n_logical, (
+        f"Expected {n_logical} per-core values, got {len(per_core)}"
+    )
+    for i, util in enumerate(per_core):
+        assert 0.0 <= util <= 100.0, (
+            f"Core {i} utilization {util:.1f}% is outside [0, 100]"
+        )
