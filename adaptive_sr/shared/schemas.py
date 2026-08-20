@@ -349,3 +349,81 @@ class NetworkMeasurement(BaseModel):
                     )
         return self
 
+
+class EdgeResourceTelemetry(BaseModel):
+    """Step 4 — Edge Resource Telemetry.
+
+    Represents a single real-time snapshot of compute resource state on an
+    Edge node.  All measurements are taken from the live system via psutil.
+
+    This schema is SEPARATE from NetworkMeasurement by design:
+      - NetworkMeasurement answers: "What is happening to the network?"
+      - EdgeResourceTelemetry answers: "What is happening to the Edge compute?"
+
+    FIELDS
+    ------
+    timestamp : str
+        ISO-8601 UTC timestamp of the snapshot, e.g.
+        "2026-08-20T12:00:00.000000Z".  Always timezone-aware.
+
+    cluster_id : str
+        Cluster identity from Edge service configuration.
+
+    edge_id : str
+        Node identity from Edge service configuration.
+
+    cpu_cores_total : int
+        Number of logical CPU cores exposed to the process by the OS.
+        (psutil.cpu_count(logical=True))
+
+    cpu_utilization : float
+        System-wide CPU utilisation averaged across all logical cores,
+        expressed as a percentage [0, 100].
+        Measured from a real psutil call — NOT synthesised.
+
+    cpu_cores_available : float
+        ESTIMATED number of logical CPU cores not currently consumed by
+        active workloads.
+        Formula: cpu_cores_total × (1 − cpu_utilization / 100)
+        IMPORTANT: This is an estimation, not an OS-level reservation.
+        The Step 4 Edge implementation has no resource reservation
+        mechanism.  "Available" here means "currently not accounted for
+        by observed utilization" — it does NOT mean cores are reserved or
+        guaranteed for a specific workload.
+        CPU = PRIMARY resource dimension for AdaptiveSR.
+
+    memory_total_bytes : int
+        Total physical RAM in bytes (psutil.virtual_memory().total).
+        RAM = SECONDARY observed resource (not yet used for allocation).
+
+    memory_used_bytes : int
+        Currently used physical RAM in bytes (psutil.virtual_memory().used).
+
+    memory_utilization : float
+        memory_used_bytes / memory_total_bytes × 100, expressed as a
+        percentage [0, 100].
+
+    active_requests : int
+        Number of requests currently being processed by the Edge service.
+        This value is caller-supplied — the request handler passes the
+        current concurrency count at the time of the snapshot.
+
+    queue_depth : int
+        Number of requests pending after admission but before execution.
+        The synchronous FastAPI Edge implementation has NO application-level
+        work queue.  Callers pass 0 and this must be documented as:
+            "No explicit application-level work queue exists in the current
+             synchronous Edge implementation."
+        A real SR scheduling queue belongs to a later step.
+    """
+    timestamp: str
+    cluster_id: str
+    edge_id: str
+    cpu_cores_total: int
+    cpu_utilization: float          # [0, 100]
+    cpu_cores_available: float      # Estimated; see field docstring
+    memory_total_bytes: int
+    memory_used_bytes: int
+    memory_utilization: float       # [0, 100]
+    active_requests: int
+    queue_depth: int
