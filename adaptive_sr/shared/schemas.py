@@ -107,9 +107,31 @@ class RepresentationConfig(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate representation IDs are not allowed.")
 
-        # No duplicate resolutions (width/height)
-        resolutions = [(r.width, r.height) for r in self.representations]
-        if len(resolutions) != len(set(resolutions)):
-            raise ValueError("Duplicate resolution configurations (width/height) are not allowed.")
+        # No duplicate resolution + FPS variants (width, height, fps)
+        variants = [(r.width, r.height, r.fps) for r in self.representations]
+        if len(variants) != len(set(variants)):
+            raise ValueError("Duplicate variant configurations (width, height, fps) are not allowed.")
         return self
+
+    def materialize(self, source_fps: int) -> 'RepresentationConfig':
+        """
+        Materializes the config by resolving 'source' FPS for all representations 
+        and validating uniqueness of the materialized variants.
+        """
+        materialized_reps = [rep.materialize(source_fps) for rep in self.representations]
+        
+        # Verify representation IDs remain unique
+        ids = [r.representation_id for r in materialized_reps]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate representation IDs are not allowed in materialized config.")
+            
+        # Verify resolved (width, height, fps) variants are unique
+        variants = [(r.width, r.height, r.fps) for r in materialized_reps]
+        if len(variants) != len(set(variants)):
+            raise ValueError(
+                f"Duplicate materialized variants (width, height, fps) detected: "
+                f"after resolving source_fps={source_fps}."
+            )
+            
+        return RepresentationConfig(representations=materialized_reps)
 
