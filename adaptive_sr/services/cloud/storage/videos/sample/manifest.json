@@ -1,0 +1,30 @@
+{
+  "video_id": "sample",
+  "duration": 6.0,
+  "representations": [
+    {
+      "representation_id": "360p",
+      "resolution": "640x360",
+      "bitrate": 1000000
+    },
+    {
+      "representation_id": "720p",
+      "resolution": "1280x720",
+      "bitrate": 3000000
+    }
+  ],
+  "chunks": [
+    {
+      "chunk_id": "0000",
+      "duration": 2.0
+    },
+    {
+      "chunk_id": "0001",
+      "duration": 2.0
+    },
+    {
+      "chunk_id": "0002",
+      "duration": 2.0
+    }
+  ]
+}

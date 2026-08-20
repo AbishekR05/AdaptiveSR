@@ -12,3 +12,6 @@ scikit-image
 lpips
 onnx
 onnxruntime
+fastapi
+uvicorn
+
