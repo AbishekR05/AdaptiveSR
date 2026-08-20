@@ -32,7 +32,7 @@ This practical normalization compares frames separated by approximately the same
 
 ---
 
-## 3. Timestamp-Based Chunk Bucketing
+## 3. Timestamp-Based Chunk Bucketing & Frame-Consistency Validation
 
 After calculating per-frame metrics continuously, frames are mapped to their corresponding chunk boundaries using **Timestamp-Based/Frame Offset Bucketing**:
 1. We segment the video physically first using FFmpeg copy segmenting.
@@ -41,6 +41,17 @@ After calculating per-frame metrics continuously, frames are mapped to their cor
 4. During the continuous profiling pass, a frame at index `idx` is assigned to chunk $k$ if:
    $$\text{start\_frame}_k \le \text{idx} \le \text{end\_frame}_k$$
 5. Chunk aggregations are performed on the bucketed frame metrics belonging to that chunk. This ensures every frame belongs to exactly one chunk.
+
+### Invariant Frame-Consistency Validations
+To guarantee that the continuous analysis path matches the physical chunking path, the profiler enforces the following strict runtime invariants before exporting profiles:
+* **Total Frame Count Matches**: The continuous profiling frame count must equal the sum of the frame counts of all physical chunks:
+  $$\text{continuous\_frame\_count} == \sum \text{physical\_chunk.frame\_count}$$
+* **No Overlaps**: Chunk frame ranges must not overlap.
+* **No Gaps**: Chunk frame ranges must have no gaps (the start frame of chunk $k+1$ must equal `end_frame` of chunk $k$ plus 1).
+* **Boundary Validation**: The first chunk starts at frame 0 and the final chunk ends at `continuous_frame_count - 1`.
+* **Universal Coverage**: Every continuous frame index is assigned to exactly one chunk.
+
+If any invariant is violated, the profiler raises a descriptive `RuntimeError` reporting the mismatch details.
 
 ---
 
@@ -100,7 +111,7 @@ Aggregations are computed using `numpy.percentile` for numerical correctness.
         "has_audio": false
     },
     "profiling_config": {
-        "chunk_duration_seconds": 2.0,
+        "target_chunk_duration_seconds": 2.0,
         "motion_temporal_window_seconds": 0.0333,
         "aggregation": {
             "motion": ["mean", "p95", "max"],
@@ -181,3 +192,4 @@ This verifies:
 5. Repeatability and schema completeness.
 6. Temporal continuity across segment boundaries.
 7. Insulated data-leakage protection.
+8. Robust Frame-Consistency Validation checks (total frames, gaps, overlaps, starting/ending boundaries, and RuntimeError raising on mismatch).

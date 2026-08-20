@@ -202,7 +202,7 @@ def test_repeatability(temp_test_dir):
     assert profile1["schema_version"] == profile2["schema_version"]
     assert profile1["video_id"] == profile2["video_id"]
     assert profile1["source"]["frame_count"] == profile2["source"]["frame_count"]
-    assert profile1["profiling_config"]["chunk_duration_seconds"] == profile2["profiling_config"]["chunk_duration_seconds"]
+    assert profile1["profiling_config"]["target_chunk_duration_seconds"] == profile2["profiling_config"]["target_chunk_duration_seconds"]
     
     # Compare exact chunk boundaries and aggregated values
     for c1, c2 in zip(profile1["chunks"], profile2["chunks"]):
@@ -276,4 +276,86 @@ def test_temporal_continuity(temp_test_dir):
     # If the buffer had reset at the chunk boundary, motion for Frame 60 would be 0.0 (loss of context).
     chunk1 = profile["chunks"][1]
     assert chunk1["motion"]["max"] > 0.0  # Proves temporal continuity is maintained!
+
+def test_profile_schema_uses_target_chunk_duration(temp_test_dir):
+    """Verifies that the output profile JSON uses target_chunk_duration_seconds in profiling_config."""
+    video_path = temp_test_dir / "schema_target_test.mp4"
+    generate_synthetic_video(video_path, fps=30, duration_seconds=1.0)
+    out_dir = temp_test_dir / "out_schema_target"
+    p, _ = run_profiler(str(video_path), str(out_dir), chunk_duration=2.0, temporal_window_s=0.0333)
+    with open(p, "r", encoding="utf-8") as f:
+        profile = json.load(f)
+    assert "target_chunk_duration_seconds" in profile["profiling_config"]
+    assert profile["profiling_config"]["target_chunk_duration_seconds"] == 2.0
+    assert "chunk_duration_seconds" not in profile["profiling_config"]
+
+def test_frame_count_consistency(temp_test_dir):
+    """Verifies that the total frame count of chunks equals the total continuous frame count."""
+    video_path = temp_test_dir / "fc_test.mp4"
+    generate_synthetic_video(video_path, fps=30, duration_seconds=2.5)
+    out_dir = temp_test_dir / "out_fc"
+    p, _ = run_profiler(str(video_path), str(out_dir), chunk_duration=1.0, temporal_window_s=0.0333)
+    with open(p, "r", encoding="utf-8") as f:
+        profile = json.load(f)
+    total_chunk_frames = sum(chunk["frame_count"] for chunk in profile["chunks"])
+    assert total_chunk_frames == profile["source"]["frame_count"]
+
+def test_chunk_ranges_have_no_gaps(temp_test_dir):
+    """Verifies that there are no gaps between consecutive chunk frame ranges."""
+    video_path = temp_test_dir / "gaps_test.mp4"
+    generate_synthetic_video(video_path, fps=30, duration_seconds=2.5)
+    out_dir = temp_test_dir / "out_gaps"
+    p, _ = run_profiler(str(video_path), str(out_dir), chunk_duration=1.0, temporal_window_s=0.0333)
+    with open(p, "r", encoding="utf-8") as f:
+        profile = json.load(f)
+    chunks = profile["chunks"]
+    for i in range(len(chunks) - 1):
+          assert chunks[i]["end_frame"] + 1 == chunks[i+1]["start_frame"]
+
+def test_chunk_ranges_do_not_overlap(temp_test_dir):
+    """Verifies that chunk frame ranges do not overlap."""
+    video_path = temp_test_dir / "overlap_test.mp4"
+    generate_synthetic_video(video_path, fps=30, duration_seconds=2.5)
+    out_dir = temp_test_dir / "out_overlap"
+    p, _ = run_profiler(str(video_path), str(out_dir), chunk_duration=1.0, temporal_window_s=0.0333)
+    with open(p, "r", encoding="utf-8") as f:
+        profile = json.load(f)
+    chunks = profile["chunks"]
+    for i in range(len(chunks) - 1):
+          assert chunks[i]["end_frame"] < chunks[i+1]["start_frame"]
+
+def test_final_chunk_ends_at_last_source_frame(temp_test_dir):
+    """Verifies that the first chunk starts at frame 0 and the final chunk ends at the last frame index."""
+    video_path = temp_test_dir / "final_chunk_test.mp4"
+    generate_synthetic_video(video_path, fps=30, duration_seconds=2.5)
+    out_dir = temp_test_dir / "out_final"
+    p, _ = run_profiler(str(video_path), str(out_dir), chunk_duration=1.0, temporal_window_s=0.0333)
+    with open(p, "r", encoding="utf-8") as f:
+        profile = json.load(f)
+    chunks = profile["chunks"]
+    assert chunks[0]["start_frame"] == 0
+    assert chunks[-1]["end_frame"] == profile["source"]["frame_count"] - 1
+
+def test_profiler_raises_runtime_error_on_mismatch(temp_test_dir):
+    """Verifies that the profiler raises a RuntimeError when frame consistency invariants are violated."""
+    video_path = temp_test_dir / "mismatch_test.mp4"
+    generate_synthetic_video(video_path, fps=30, duration_seconds=2.2)
+    out_dir = temp_test_dir / "out_mismatch"
+    
+    # Mock VideoLoader's get_metadata inside the loop to return an incorrect frame count for a chunk,
+    # deliberately creating a frame count mismatch.
+    original_get_metadata = VideoLoader.get_metadata
+    
+    def mocked_get_metadata(self):
+        meta = original_get_metadata(self)
+        if "chunks" in self.file_path:
+            meta = meta.copy()
+            meta["frame_count"] += 10 # Cause mismatch!
+        return meta
+        
+    with patch.object(VideoLoader, "get_metadata", mocked_get_metadata):
+        with pytest.raises(RuntimeError) as exc_info:
+            run_profiler(str(video_path), str(out_dir), chunk_duration=2.0, temporal_window_s=0.0333)
+        assert "Frame count mismatch" in str(exc_info.value)
+
 

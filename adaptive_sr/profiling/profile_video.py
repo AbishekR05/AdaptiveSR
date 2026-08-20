@@ -155,7 +155,71 @@ def run_profiler(input_video: str, output_dir: str, chunk_duration: float, tempo
                 "complexity": complexity
             })
 
-    # 4. Perform chunk aggregations (mean, p95, max)
+    # 4. Frame-Consistency Validation
+    continuous_frame_count = idx + 1
+    physical_frame_count = sum(boundary["frame_count"] for boundary in chunk_boundaries)
+    
+    if continuous_frame_count != physical_frame_count:
+        raise RuntimeError(
+            f"Frame count mismatch: continuous_frame_count ({continuous_frame_count}) "
+            f"!= physical_frame_count ({physical_frame_count}) for source '{input_video}'."
+        )
+        
+    if not chunk_boundaries:
+        raise RuntimeError(f"No chunk boundaries generated for source '{input_video}'.")
+        
+    if chunk_boundaries[0]["start_frame"] != 0:
+        raise RuntimeError(
+            f"First chunk does not begin at frame 0 (starts at {chunk_boundaries[0]['start_frame']}) "
+            f"for source '{input_video}'."
+        )
+        
+    final_end = chunk_boundaries[-1]["end_frame"]
+    if final_end != continuous_frame_count - 1:
+        raise RuntimeError(
+            f"Final chunk does not end at last frame ({continuous_frame_count - 1}) (ends at {final_end}) "
+            f"for source '{input_video}'."
+        )
+        
+    assigned_frames = set()
+    for i, boundary in enumerate(chunk_boundaries):
+        c_id = boundary["chunk_id"]
+        c_start = boundary["start_frame"]
+        c_end = boundary["end_frame"]
+        c_count = boundary["frame_count"]
+        
+        if c_count != (c_end - c_start + 1):
+            raise RuntimeError(
+                f"Chunk {c_id} frame range {c_start}-{c_end} count mismatch: "
+                f"frame_count ({c_count}) != expected ({c_end - c_start + 1}) for source '{input_video}'."
+            )
+            
+        for f in range(c_start, c_end + 1):
+            if f in assigned_frames:
+                raise RuntimeError(
+                    f"Frame overlap detected: Frame {f} is assigned to multiple chunks "
+                    f"for source '{input_video}'."
+                )
+            assigned_frames.add(f)
+            
+        if i < len(chunk_boundaries) - 1:
+            next_boundary = chunk_boundaries[i + 1]
+            next_start = next_boundary["start_frame"]
+            if next_start != c_end + 1:
+                raise RuntimeError(
+                    f"Gap detected between chunk {c_id} (ends at {c_end}) and chunk {next_boundary['chunk_id']} "
+                    f"(starts at {next_start}) for source '{input_video}'."
+                )
+                
+    all_source_frames = set(range(continuous_frame_count))
+    unassigned = all_source_frames - assigned_frames
+    if unassigned:
+        raise RuntimeError(
+            f"Unassigned frames detected: {sorted(list(unassigned))} not covered "
+            f"for source '{input_video}'."
+        )
+
+    # 5. Perform chunk aggregations (mean, p95, max)
     chunks_profile_list = []
     chunks_manifest_list = []
     
@@ -243,7 +307,7 @@ def run_profiler(input_video: str, output_dir: str, chunk_duration: float, tempo
             "has_audio": meta["has_audio"]
         },
         "profiling_config": {
-            "chunk_duration_seconds": chunk_duration,
+            "target_chunk_duration_seconds": chunk_duration,
             "motion_temporal_window_seconds": temporal_window_s,
             "aggregation": {
                 "motion": ["mean", "p95", "max"],
