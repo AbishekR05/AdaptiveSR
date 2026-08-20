@@ -135,3 +135,148 @@ class RepresentationConfig(BaseModel):
             
         return RepresentationConfig(representations=materialized_reps)
 
+
+class RepresentationChunk(BaseModel):
+    chunk_id: str
+    representation_id: str
+    frame_start: int = Field(..., ge=0)
+    frame_end: int = Field(..., ge=0)
+    start_time_seconds: float = Field(..., ge=0.0)
+    end_time_seconds: float = Field(..., ge=0.0)
+    duration_seconds: float = Field(..., gt=0.0)
+    file_path: str
+    size_bytes: int = Field(..., ge=0)
+
+    @model_validator(mode="after")
+    def validate_frame_range(self) -> 'RepresentationChunk':
+        if self.frame_start > self.frame_end:
+            raise ValueError(f"frame_start ({self.frame_start}) cannot exceed frame_end ({self.frame_end})")
+        if self.start_time_seconds > self.end_time_seconds:
+            raise ValueError("start_time_seconds cannot exceed end_time_seconds")
+        return self
+
+
+class RepresentationChunkMapping(BaseModel):
+    representation_chunks: List[RepresentationChunk]
+
+    def validate_invariants(self, config: RepresentationConfig, source_metadata: dict, profile_chunks: List[dict]):
+        """
+        Validates mapping invariants against the configured representations, 
+        source video metadata, and the authoritative Step 1 profile chunks.
+        """
+        valid_rep_ids = {r.representation_id for r in config.representations}
+        
+        rep_to_chunks = {}
+        for rc in self.representation_chunks:
+            if rc.representation_id not in valid_rep_ids:
+                raise ValueError(
+                    f"Representation ID '{rc.representation_id}' referenced in mapping "
+                    f"does not exist in representation config."
+                )
+            rep_to_chunks.setdefault(rc.representation_id, []).append(rc)
+            
+        seen_pairs = set()
+        for rc in self.representation_chunks:
+            pair = (rc.representation_id, rc.chunk_id)
+            if pair in seen_pairs:
+                raise ValueError(f"Duplicate mapping entry for (representation, chunk): {pair}")
+            seen_pairs.add(pair)
+
+        logical_chunk_ids = [c["chunk_id"] for c in profile_chunks]
+        if not logical_chunk_ids:
+            raise ValueError("Authoritative timeline has no chunks.")
+
+        for rep_id in valid_rep_ids:
+            chunks_for_rep = rep_to_chunks.get(rep_id, [])
+            mapped_chunk_ids = [c.chunk_id for c in chunks_for_rep]
+            
+            missing = set(logical_chunk_ids) - set(mapped_chunk_ids)
+            if missing:
+                raise ValueError(
+                    f"Missing chunks for representation '{rep_id}': {missing}"
+                )
+                
+            extra = set(mapped_chunk_ids) - set(logical_chunk_ids)
+            if extra:
+                raise ValueError(
+                    f"Unknown chunk IDs mapped for representation '{rep_id}': {extra}"
+                )
+                
+        for p_chunk in profile_chunks:
+            c_id = p_chunk["chunk_id"]
+            expected_start_frame = p_chunk["start_frame"]
+            expected_end_frame = p_chunk["end_frame"]
+            expected_start_time = p_chunk["start_time_seconds"]
+            expected_end_time = p_chunk["end_time_seconds"]
+            expected_duration = p_chunk["duration_seconds"]
+            
+            for rep_id, chunks_for_rep in rep_to_chunks.items():
+                matching_rc = next((c for c in chunks_for_rep if c.chunk_id == c_id), None)
+                if matching_rc is None:
+                    raise ValueError(f"Logical chunk '{c_id}' not found in representation '{rep_id}'.")
+                    
+                if matching_rc.frame_start != expected_start_frame or matching_rc.frame_end != expected_end_frame:
+                    raise ValueError(
+                        f"Frame range mismatch for chunk '{c_id}' under representation '{rep_id}': "
+                        f"expected ({expected_start_frame}, {expected_end_frame}), "
+                        f"got ({matching_rc.frame_start}, {matching_rc.frame_end})."
+                    )
+                    
+                if matching_rc.start_time_seconds != expected_start_time or matching_rc.end_time_seconds != expected_end_time:
+                    raise ValueError(
+                        f"Timestamp range mismatch for chunk '{c_id}' under representation '{rep_id}': "
+                        f"expected ({expected_start_time}, {expected_end_time}), "
+                        f"got ({matching_rc.start_time_seconds}, {matching_rc.end_time_seconds})."
+                    )
+                    
+                if matching_rc.duration_seconds != expected_duration:
+                    raise ValueError(
+                        f"Duration mismatch for chunk '{c_id}' under representation '{rep_id}': "
+                        f"expected {expected_duration}, got {matching_rc.duration_seconds}."
+                    )
+
+        for rep_id, chunks_for_rep in rep_to_chunks.items():
+            sorted_chunks = sorted(chunks_for_rep, key=lambda x: x.chunk_id)
+            
+            if sorted_chunks[0].frame_start != 0:
+                raise ValueError(
+                    f"First chunk '{sorted_chunks[0].chunk_id}' for representation '{rep_id}' "
+                    f"does not start at frame 0 (starts at {sorted_chunks[0].frame_start})."
+                )
+                
+            total_source_frames = source_metadata["frame_count"]
+            if sorted_chunks[-1].frame_end != total_source_frames - 1:
+                raise ValueError(
+                    f"Final chunk '{sorted_chunks[-1].chunk_id}' for representation '{rep_id}' "
+                    f"does not end at final frame index {total_source_frames - 1} "
+                    f"(ends at {sorted_chunks[-1].frame_end})."
+                )
+                
+            for idx in range(len(sorted_chunks)):
+                rc = sorted_chunks[idx]
+                
+                if rc.duration_seconds <= 0:
+                    raise ValueError(f"Chunk '{rc.chunk_id}' duration must be positive.")
+                if rc.frame_start > rc.frame_end:
+                    raise ValueError(f"Chunk '{rc.chunk_id}' frame_start > frame_end.")
+                    
+                if idx < len(sorted_chunks) - 1:
+                    next_rc = sorted_chunks[idx + 1]
+                    
+                    if next_rc.chunk_id <= rc.chunk_id:
+                        raise ValueError(f"Non-monotonic chunk IDs: {rc.chunk_id} -> {next_rc.chunk_id}")
+                        
+                    if next_rc.frame_start <= rc.frame_end:
+                        raise ValueError(
+                            f"Overlap detected between chunk '{rc.chunk_id}' (ends at {rc.frame_end}) "
+                            f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.frame_start}) "
+                            f"under representation '{rep_id}'."
+                        )
+                        
+                    if next_rc.frame_start != rc.frame_end + 1:
+                        raise ValueError(
+                            f"Gap detected between chunk '{rc.chunk_id}' (ends at {rc.frame_end}) "
+                            f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.frame_start}) "
+                            f"under representation '{rep_id}'."
+                        )
+

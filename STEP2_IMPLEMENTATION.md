@@ -1,16 +1,18 @@
-# Step 2.1 — Representation Schema and Configuration Contract
+# Step 2 — Video Representation and Mapping Contract
 
-This document describes the implementation of the representation schema and configuration contract (Step 2.1) for the AdaptiveSR project.
+This document describes the implementation of video representations and chunk-to-representation mapping (Step 2.1 and Step 2.2) for the AdaptiveSR project.
 
 ---
 
 ## 1. Purpose & Objectives
 
-Step 2.1 establishes the data models and schemas that define multiple encoded video representations. A video representation represents a specific encoded variant of the source video (with configured resolution, bitrate, codec, and frame rate). These models serve as the foundational configuration contract shared by the Cloud Origin, Edge Servers, Client player, and downstream scheduling modules.
+Step 2 establishes the delivery data contract linking source-side visual profiling results (Step 1) with delivery representations served by Cloud Origin and processed by Edge Nodes:
+* **Step 2.1 (Representations)** defines the data model for the set of pre-encoded video qualities (resolutions, bitrates, codecs, framerates).
+* **Step 2.2 (Mapping)** maps the authoritative logical chunks from the profiling timeline to representation-specific metadata objects.
 
 ---
 
-## 2. Representation Schema Details
+## 2. Representation Schema Details (Step 2.1)
 
 We implemented `VideoRepresentation` and `RepresentationConfig` in [`adaptive_sr/shared/schemas.py`](file:///d:/Full%20Stack/AdaptiveSR/adaptive_sr/shared/schemas.py) using Pydantic:
 
@@ -27,51 +29,69 @@ Defines the metrics and identifiers of a single variant:
 ### `RepresentationConfig`
 Contains a list of `VideoRepresentation` instances to configure the entire set of available profiles.
 
----
-
-## 3. Validation Rules
-
-The schema enforces strict validation checks:
-1. **Unique Representation IDs**: Duplicate `representation_id` entries inside the same config are rejected.
-2. **Positive Resolution**: Width and height must be strictly positive integers (`gt=0`).
-3. **Positive Bitrate**: Bitrate in kbps must be strictly positive (`gt=0`).
-4. **Supported Codec**: Codec string must map to supported standards (case-insensitive: `h264`, `h265`, `hevc`, `vp9`, `av1`).
-5. **Valid FPS**: Framerate must be either `30`, `60`, `120` or the literal string `"source"`.
+#### Validation Rules
+1. **Unique Representation IDs**: Duplicate IDs inside the same config are rejected.
+2. **Positive Resolution & Bitrate**: Resolving dimensions and bandwidth constraints must be positive.
+3. **Supported Codec**: Checks standard formats (`h264`, `h265`, `hevc`, `vp9`, `av1`).
+4. **Valid FPS**: Restricted to `30`, `60`, `120` or `"source"`.
    > [!NOTE]
    > **FPS Scope Statement**: 30/60/120 FPS are the project's evaluated source/delivery FPS scenarios. This is not a universal streaming limitation.
-6. **No Duplicate Materialized Variants**: 
-   * Pre-materialization: Representations must not have identical `(width, height, fps)` configurations. We permit multiple configurations with the same resolution (e.g., `720p @ 30` and `720p @ 60`) to coexist because framerate is an independent variant dimension.
-   * Post-materialization: Materialized configurations must not contain duplicate resolved `(width, height, fps)` variants.
+5. **No Duplicate Materialized Variants**: 
+   * Pre-materialization: Unique `(width, height, fps)` tuples. Identical resolutions are accepted if framerates are different (e.g. `720p @ 30` and `720p @ 60`).
+   * Post-materialization: Resolving `"source"` must not cause overlapping conflicts. If resolving `"source"` at `60` results in two identical `(width, height, 60)` variants, it is rejected.
 
 ---
 
-## 4. FPS Materialization & late-binding collision checking
+## 3. Chunk-to-Representation Mapping (Step 2.2)
 
-If `"fps": "source"` is configured, the model supports lazy resolution:
-* Calling `representation.materialize(source_fps=X)` returns a new `VideoRepresentation` instance where `"source"` is resolved to the actual integer framerate `X` of the source video.
-* Calling `config.materialize(source_fps=X)` materializes all entries in the config.
-* **Late-binding duplicate check**: The materialization method dynamically validates that resolving `"source"` does not produce a variant conflict. For example, if a configuration has both `720p @ source` and `720p @ 60`, materializing with `source_fps=60` resolves both to `720p @ 60`, which is correctly caught and rejected with a `ValueError`. If materialized with `source_fps=30`, both remain distinct and are accepted.
+We implemented `RepresentationChunk` and `RepresentationChunkMapping` in [`adaptive_sr/shared/schemas.py`](file:///d:/Full%20Stack/AdaptiveSR/adaptive_sr/shared/schemas.py):
+
+### Concept Separation
+* **Logical Chunk**: The authoritative temporal unit defined in Step 1. It acts as the master timeline. All representations inherit this logical timeline.
+* **Representation Chunk**: The representation-specific metadata mapping indicating the actual file path, file size in bytes, and referencing the logical boundaries.
+
+### `RepresentationChunk` Model
+Represents a chunk mapped to a representation:
+* `chunk_id` (`str`): Master chunk ID matching Step 1.
+* `representation_id` (`str`): Mapped representation identifier.
+* `frame_start` (`int`), `frame_end` (`int`): Frame bounds derived from Step 1.
+* `start_time_seconds` (`float`), `end_time_seconds` (`float`): Logical timestamps.
+* `duration_seconds` (`float`): Actual logical duration.
+* `file_path` (`str`): Path to the encoded representation chunk file.
+* `size_bytes` (`int`): Encoded file size in bytes.
+
+---
+
+## 4. Mapping Invariant Rules
+
+The mapping manager validates the following **12 strict validation invariants**:
+1. **Full Coverage**: Every logical chunk maps to every configured representation.
+2. **No Duplicates**: No duplicate `(representation_id, chunk_id)` pairs are allowed.
+3. **Identical Frames**: Frame ranges must be identical across representations.
+4. **Identical Timestamps**: Logical start/end timestamps and durations must be identical across representations.
+5. **Sanity Ranges**: `frame_start <= frame_end` and `start_time_seconds <= end_time_seconds`.
+6. **Positive Duration**: `duration_seconds > 0.0`.
+7. **Monotonic Order**: Chunk indexing must be sorted chronologically and monotonically.
+8. **No Gaps**: Frame sequences must contain no gaps between consecutive chunks.
+9. **No Overlaps**: Frame sequences must contain no overlaps between chunks.
+10. **First Chunk Bound**: The first chunk starts exactly at frame 0.
+11. **Final Chunk Bound**: The final chunk ends exactly at `frame_count - 1` of the source.
+12. **Config Existence**: Mapped representation IDs must exist in the configuration.
 
 ---
 
 ## 5. Deferred Audio Scope
 
-Audio representation fields are explicitly **deferred** from the Step 2.1 schema. The current representation configuration contract only covers the video streaming paths used by the AdaptiveSR scheduler. Step 0's existing `has_audio` video metadata field remains completely unaffected.
+Audio representation fields are explicitly **deferred** from the representation schema. The current contract covers only the video streaming path used by the scheduling and enhancement components. Existing Step 0 `has_audio` metadata remains completely unaffected.
 
 ---
 
-## 6. Non-Scheduling Policy
+## 6. Automated Testing
 
-To maintain clear boundary separation, the representation schema strictly defines **what exists** on the source/delivery servers. It does not contain scheduling/adaptive state variables such as `target_representation_id` or `base_representation_id`.
-
----
-
-## 7. Automated Testing
-
-Tests are implemented in [`tests/test_representation.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_representation.py) verifying:
-* Valid configuration parses correctly.
-* Duplicate IDs or identical `(width, height, fps)` variants are rejected.
-* Same resolution at different FPS are accepted.
-* Source FPS materialization works.
-* Resolving source FPS to a colliding explicit FPS causes a ValueError.
-* Target/base selection remains uncoupled.
+* Representation validation is tested in [`tests/test_representation.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_representation.py).
+* Mapping invariants are tested in [`tests/test_mapping.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_mapping.py) verifying:
+  * Full coverage and missing chunks detection.
+  * Collision detection for duplicate mapping pairs.
+  * Chronological sorting, gaps, and overlaps errors.
+  * Correct frame scaling on 30, 60, and 120 FPS timelines.
+  * Acceptance of variable final chunk duration (proving no hardcoded 2.0s duration assumptions).
