@@ -38,10 +38,14 @@ Persisted measurements are traceable to the corresponding path identity.
 
 * **Independent Measurement**: RTT (Round Trip Time) is a separate network characteristic and is **never** calculated from `chunk_size / throughput` or request transfer durations.
 * **Probing Mechanism**: Measured independently using lightweight health pings (`GET /health` requests) that carry no payload.
-* **Established telemetry**:
+* **Telemetry**:
   * Client-to-Edge RTT is tracked via the client player health ping queries (captured in `ClientTelemetry.RTT` or `NetworkMeasurement.rtt_ms`).
   * Edge-to-Cloud RTT is tracked via active edge node queries (captured in `EdgeTelemetry.rtt` or `NetworkMeasurement.rtt_ms`).
 * **Probe Timings**: Ping measurements represent the round-trip latency in milliseconds. Probes run independently of chunk payload transfer, meaning independent RTT probes do not fabricate or carry fake `chunk_id` attributes.
+
+> [!WARNING]
+> **RTT Contamination Note**:
+> RTT measurements currently use independent /health probes. Connection setup and reuse behavior may cause the measured RTT to include connection-establishment overhead that is not necessarily incurred by subsequent chunk transfers. Step 3.2 must explicitly control or document HTTP connection reuse/session behavior before RTT is interpreted as a propagation-delay proxy for deadline modeling.
 
 ---
 
@@ -74,14 +78,18 @@ We defined the `NetworkMeasurement` model in [`adaptive_sr/shared/schemas.py`](f
 class NetworkMeasurement(BaseModel):
     request_id: str
     network_path: Literal["client_edge", "edge_cloud"]
-    timestamp: str  # ISO-8601 UTC format
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    chunk_id: Optional[str] = None
+    representation_id: Optional[str] = None
     bytes_transferred: Optional[int] = None
     rtt_ms: Optional[float] = None
     transfer_duration_seconds: Optional[float] = None
     measured_throughput_mbps: Optional[float] = None
 ```
 
-* **Request and Chunk Association**: All measurements related to video requests retain trace links to `request_id`, `chunk_id`, and `representation_id`.
+* **Trace Association**:
+  * A payload transfer associated with a video chunk contains `request_id`, `chunk_id`, and `representation_id`.
+  * An independent RTT health probe has `chunk_id = None` and `representation_id = None`, preventing fabrication of chunk associations.
 * **Timestamp format**: Telemetry records use consistent ISO-8601 UTC string formats (e.g. `"2026-08-20T12:00:00Z"`).
 
 ---

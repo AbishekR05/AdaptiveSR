@@ -171,3 +171,52 @@ def test_step0_telemetry_compatibility():
     )
     assert client_t.measured_throughput_mbps == 1.0
     assert edge_t.rtt == 0.010
+
+def test_rtt_only_measurement_accepts_null_chunk_and_repr():
+    """Verifies that NetworkMeasurement accepts an RTT-only measurement with chunk_id=None and representation_id=None."""
+    m = NetworkMeasurement(
+        request_id="req-ping-2",
+        network_path="client_edge",
+        rtt_ms=15.0,
+        chunk_id=None,
+        representation_id=None
+    )
+    assert m.chunk_id is None
+    assert m.representation_id is None
+
+def test_chunk_transfer_accepts_chunk_and_repr_id():
+    """Verifies that NetworkMeasurement accepts a chunk transfer with chunk_id and representation_id present."""
+    m = NetworkMeasurement(
+        request_id="req-transfer-2",
+        network_path="client_edge",
+        chunk_id="0004",
+        representation_id="720p",
+        bytes_transferred=250000,
+        transfer_duration_seconds=2.0,
+        measured_throughput_mbps=1.0
+    )
+    assert m.chunk_id == "0004"
+    assert m.representation_id == "720p"
+
+def test_request_id_remains_required():
+    """Verifies that request_id remains required and validation fails if it's missing."""
+    with pytest.raises(ValidationError):
+        NetworkMeasurement(
+            network_path="client_edge",
+            rtt_ms=5.0
+        )
+
+def test_network_path_restricted_values():
+    """Verifies that network_path remains restricted to 'client_edge' and 'edge_cloud'."""
+    # Valid
+    m1 = NetworkMeasurement(request_id="r1", network_path="client_edge")
+    m2 = NetworkMeasurement(request_id="r2", network_path="edge_cloud")
+    assert m1.network_path == "client_edge"
+    assert m2.network_path == "edge_cloud"
+
+    # Invalid values must raise ValidationError
+    with pytest.raises(ValidationError):
+        NetworkMeasurement(
+            request_id="r3",
+            network_path="invalid_path_name"
+        )
