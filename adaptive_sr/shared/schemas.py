@@ -53,6 +53,7 @@ class EdgeTelemetry(BaseModel):
 
 from typing import Union, Literal
 from pydantic import Field, field_validator, model_validator
+from datetime import datetime
 
 class VideoRepresentation(BaseModel):
     representation_id: str
@@ -317,4 +318,32 @@ class RepresentationChunkMapping(BaseModel):
                             f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.frame_start}) "
                             f"under representation '{rep_id}'."
                         )
+
+
+class NetworkMeasurement(BaseModel):
+    request_id: str
+    network_path: Literal["client_edge", "edge_cloud"]
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    bytes_transferred: Optional[int] = None
+    rtt_ms: Optional[float] = None
+    transfer_duration_seconds: Optional[float] = None
+    measured_throughput_mbps: Optional[float] = None
+
+    @model_validator(mode="after")
+    def validate_measurement(self) -> 'NetworkMeasurement':
+        # Zero-byte RTT probes do not produce a fake throughput value
+        if self.bytes_transferred == 0 or self.bytes_transferred is None:
+            if self.measured_throughput_mbps is not None and self.measured_throughput_mbps > 0.0:
+                raise ValueError("Zero-byte RTT probes must not fabricate a non-zero throughput.")
+                
+        # Throughput validation
+        if self.bytes_transferred is not None and self.transfer_duration_seconds is not None:
+            if self.transfer_duration_seconds > 0.0:
+                expected_mbps = (self.bytes_transferred * 8) / (self.transfer_duration_seconds * 1_000_000.0)
+                if self.measured_throughput_mbps is not None and abs(self.measured_throughput_mbps - expected_mbps) > 0.01:
+                    raise ValueError(
+                        f"Throughput mismatch: got {self.measured_throughput_mbps} Mbps, "
+                        f"expected {expected_mbps} Mbps."
+                    )
+        return self
 
