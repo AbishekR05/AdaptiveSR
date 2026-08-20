@@ -1,12 +1,10 @@
-# Step 3 — Network Measurement Contract
-
-This document describes the implementation of the network measurement contract (Step 3.1) for the AdaptiveSR project.
+# Step 3 — Network Measurement Contract & Controlled Emulation
 
 ---
 
-## 1. Architecture Diagram
+## Step 3.1 — Network Measurement Contract
 
-The AdaptiveSR project treats network communication as two independent paths:
+### 1. Architecture
 
 ```text
 CLIENT
@@ -20,65 +18,39 @@ CLIENT
  CLOUD / ORIGIN
 ```
 
-These communication paths must not be collapsed into a single latency or throughput variable.
+The two paths must remain independently configured and independently measured.
 
----
+### 2. Network Path Identities
 
-## 2. Network Path Identities
+* **`client_edge`**: Client ↔ Edge Node.
+* **`edge_cloud`**: Edge Node ↔ Cloud Origin.
 
-We define two explicit path keys:
-* **`client_edge`**: Spans the Client ↔ Edge Node path.
-* **`edge_cloud`**: Spans the Edge Node ↔ Cloud Origin path.
+### 3. RTT Definition
 
-Persisted measurements are traceable to the corresponding path identity.
-
----
-
-## 3. RTT Definition
-
-* **Independent Measurement**: RTT (Round Trip Time) is a separate network characteristic and is **never** calculated from `chunk_size / throughput` or request transfer durations.
-* **Probing Mechanism**: Measured independently using lightweight health pings (`GET /health` requests) that carry no payload.
-* **Telemetry**:
-  * Client-to-Edge RTT is tracked via the client player health ping queries (captured in `ClientTelemetry.RTT` or `NetworkMeasurement.rtt_ms`).
-  * Edge-to-Cloud RTT is tracked via active edge node queries (captured in `EdgeTelemetry.rtt` or `NetworkMeasurement.rtt_ms`).
-* **Probe Timings**: Ping measurements represent the round-trip latency in milliseconds. Probes run independently of chunk payload transfer, meaning independent RTT probes do not fabricate or carry fake `chunk_id` attributes.
+RTT is measured independently from payload transfers using lightweight `/health` ping requests.
 
 > [!WARNING]
-> **RTT Contamination Note**:
-> RTT measurements currently use independent /health probes. Connection setup and reuse behavior may cause the measured RTT to include connection-establishment overhead that is not necessarily incurred by subsequent chunk transfers. Step 3.2 must explicitly control or document HTTP connection reuse/session behavior before RTT is interpreted as a propagation-delay proxy for deadline modeling.
+> **RTT Contamination (addressed in Step 3.2):**
+> RTT measurements currently use independent `/health` probes. Because the codebase uses bare `requests.get()` with no persistent HTTP session, every call — including health pings — opens a new TCP connection. RTT therefore includes TCP connection-establishment overhead and is **connection-inclusive latency**, not pure propagation delay. Step 3.2 documents this explicitly and defers persistent-session control to a future step.
 
----
+### 4. Throughput & Transfer Duration
 
-## 4. Throughput & Payload Transfer Durations
+$$\text{Throughput (Mbps)} = \frac{\text{bytes\_transferred} \times 8}{\text{transfer\_duration\_seconds} \times 1{,}000{,}000}$$
 
-* **Payload Transfer Duration (`transfer_duration_seconds`)**: Represents the time required to transfer the payload bytes, excluding initial RTT pings.
-* **Throughput Calculation**: Throughput in Mbps (Megabits per second) is computed as:
-  $$\text{Throughput (Mbps)} = \frac{\text{Bytes Transferred} \times 8}{\text{Transfer Duration (Seconds)} \times 1,000,000}$$
-* **Validation Constraint**: Zero-byte RTT probes do not produce a fake or non-zero throughput speed. If bytes transferred equals 0 or is absent, throughput must be absent.
+Zero-byte RTT probes must not produce a non-zero throughput value.
 
----
+### 5. Cache Semantics
 
-## 5. Cache Semantics (HIT vs. MISS)
+* **Cache HIT**: `client_edge` transfer exists; `edge_cloud` payload transfer is **absent** (not zero-speed).
+* **Cache MISS**: Both `client_edge` and `edge_cloud` transfers exist.
 
-The measurement contract must distinguish Cache HITs from Cache MISSes to properly trace traffic origins:
-* **Cache HIT**: 
-  * The `client_edge` payload transfer exists.
-  * The `edge_cloud` payload transfer is **absent** (since the chunk is served locally from the Edge's cache directory). We do not represent this absent transfer as zero-speed or zero-duration network traffic.
-* **Cache MISS**:
-  * The `client_edge` payload transfer exists.
-  * The `edge_cloud` payload transfer exists (Edge fetches the chunk from Cloud).
-
----
-
-## 6. Persisted Telemetry Schema
-
-We defined the `NetworkMeasurement` model in [`adaptive_sr/shared/schemas.py`](file:///d:/Full%20Stack/AdaptiveSR/adaptive_sr/shared/schemas.py):
+### 6. NetworkMeasurement Schema
 
 ```python
 class NetworkMeasurement(BaseModel):
     request_id: str
     network_path: Literal["client_edge", "edge_cloud"]
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    timestamp: str          # ISO-8601 UTC, e.g. "2026-08-20T12:00:00.000000Z"
     chunk_id: Optional[str] = None
     representation_id: Optional[str] = None
     bytes_transferred: Optional[int] = None
@@ -87,14 +59,93 @@ class NetworkMeasurement(BaseModel):
     measured_throughput_mbps: Optional[float] = None
 ```
 
-* **Trace Association**:
-  * A payload transfer associated with a video chunk contains `request_id`, `chunk_id`, and `representation_id`.
-  * An independent RTT health probe has `chunk_id = None` and `representation_id = None`, preventing fabrication of chunk associations.
-* **Timestamp format**: Telemetry records use consistent ISO-8601 UTC string formats (e.g. `"2026-08-20T12:00:00Z"`).
+* **RTT probes**: `chunk_id = None`, `representation_id = None`.
+* **Chunk transfers**: `chunk_id` and `representation_id` populated.
 
 ---
 
-## 7. No Emulation Statement
+## Step 3.2 — Controlled Network Emulation
+
+### 1. Emulation Architecture
+
+```text
+CLIENT
+   │ ← EmulatedHttpAdapter(config, "client_edge") applied here
+   │   delay_ms + bandwidth throttle
+   ▼
+ EDGE
+   │ ← EmulatedHttpAdapter(config, "edge_cloud") applied here
+   │   delay_ms + bandwidth throttle
+   ▼
+ CLOUD / ORIGIN
+```
 
 > [!IMPORTANT]
-> **No Network Emulation**: No bandwidth throttling, artificial latency injection, packet loss modeling, or `tc`/`netem` emulation tools were introduced in Step 3.1. These capabilities are deferred to Step 3.2. Only the formal measurement contract was established.
+> **This is application-level emulation, NOT kernel/network-stack-level packet shaping.**
+> `tc`/`netem` (Linux kernel traffic control) is not available on Windows. The adapter injects delay via `time.sleep()` and throttles bandwidth by reading the response body in timed chunks. Telemetry measures the resulting actual transfer durations — it is never manually set to the configured bandwidth value.
+
+### 2. Windows Limitations
+
+* `tc`/`netem` requires Linux and elevated privileges — not available in this development environment.
+* The emulation adapter is designed as a **swappable layer**: a future Linux/Azure deployment replaces `EmulatedHttpAdapter` with a real tc/netem shaper with no other code changes.
+
+### 3. Connection Reuse Behavior
+
+The current codebase uses `requests.get()` with no persistent HTTP session. Every call opens a **new TCP connection**. Therefore:
+* RTT measurements (from health probes) include TCP handshake overhead.
+* RTT is **connection-inclusive latency**, not pure propagation delay.
+* Emulated delay (`delay_ms`) is injected **at the application layer** and adds to this connection-inclusive RTT.
+
+### 4. Per-Path Configuration Model
+
+```python
+class NetworkPathEmulationConfig(BaseModel):
+    bandwidth_mbps: Optional[float] = None  # None = unlimited
+    delay_ms: float = 0.0
+    packet_loss_rate: float = 0.0           # [0.0, 1.0]
+
+class NetworkEmulationConfig(BaseModel):
+    enabled: bool = True
+    client_edge: NetworkPathEmulationConfig
+    edge_cloud: NetworkPathEmulationConfig
+    scenario_name: Optional[str] = None
+```
+
+Each path is independently configurable. Setting `enabled=False` disables all emulation (passthrough).
+
+### 5. Bandwidth Emulation
+
+The response body is streamed in 4 KB chunks. After writing each chunk, the adapter sleeps for:
+
+$$\text{sleep} = \frac{\text{chunk\_bytes}}{\text{bytes\_per\_second}} - \text{elapsed}$$
+
+This makes `transfer_duration_seconds` grow proportionally as configured bandwidth decreases. Throughput is then **measured** from actual bytes and actual duration using the Step 3.1 formula — not assigned from the configured value.
+
+### 6. Delay Emulation
+
+`time.sleep(delay_ms / 1000.0)` is called before streaming the response body. The sleep is only applied when `emulation.enabled = True` and `delay_ms > 0`.
+
+### 7. Packet Loss
+
+Application-layer fault injection: with probability `packet_loss_rate`, an `IOError` is raised before the response body is read. This simulates a dropped connection at the application layer. **It is not true packet-level loss.** Callers must handle the exception.
+
+If reliable packet-level loss cannot be implemented, `packet_loss_rate` remains a documented adapter capability for the future Linux/Azure implementation.
+
+### 8. Named Scenarios
+
+| Scenario | client_edge BW | client_edge delay | edge_cloud BW | edge_cloud delay |
+|----------|---------------|-------------------|---------------|------------------|
+| good | 20 Mbps | 5 ms | 100 Mbps | 2 ms |
+| moderate | 5 Mbps | 30 ms | 20 Mbps | 10 ms |
+| poor | 1 Mbps | 100 ms | 5 Mbps | 50 ms |
+| disabled | unlimited | 0 ms | unlimited | 0 ms |
+
+Values are stored in `SCENARIOS` dict in `emulation.py` — not hardcoded throughout the codebase.
+
+### 9. Experiment Reproducibility
+
+Each `NetworkEmulationConfig` carries a `scenario_name` field. Logging the scenario name with run telemetry is sufficient to reconstruct bandwidth, delay, and loss configuration deterministically from `SCENARIOS`.
+
+### 10. No SR/ABR/ML
+
+No super-resolution, ABR, ML, QoE optimization, or scheduling functionality was introduced in Step 3.2.

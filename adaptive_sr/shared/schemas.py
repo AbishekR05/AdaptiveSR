@@ -53,7 +53,7 @@ class EdgeTelemetry(BaseModel):
 
 from typing import Union, Literal
 from pydantic import Field, field_validator, model_validator
-from datetime import datetime
+from datetime import datetime, timezone
 
 class VideoRepresentation(BaseModel):
     representation_id: str
@@ -323,7 +323,7 @@ class RepresentationChunkMapping(BaseModel):
 class NetworkMeasurement(BaseModel):
     request_id: str
     network_path: Literal["client_edge", "edge_cloud"]
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z")
     chunk_id: Optional[str] = None
     representation_id: Optional[str] = None
     bytes_transferred: Optional[int] = None
