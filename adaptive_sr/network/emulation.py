@@ -109,24 +109,78 @@ class NetworkEmulationConfig(BaseModel):
 # Named scenario presets
 # ---------------------------------------------------------------------------
 
-# Values are stored as explicit config (not hardcoded throughout the code).
-# Adjust bandwidth/delay here as research parameters are finalised.
+# ── Rosevin (2024) testbed reference ────────────────────────────────────────
+# The base paper reports an actual cloud-to-edge path measurement of:
+#   RTT          ≈ 43 ms   (round-trip, connection-inclusive, from the paper)
+#   bandwidth    ≈ 186 Mbps
+#
+# IMPORTANT SEMANTICS — delay_ms vs measured RTT:
+#   delay_ms is application-injected one-way DELAY added before the response
+#   body is returned to the caller.  It is NOT the same as RTT.
+#   - Injecting delay_ms = D increases the *wall-clock* round-trip by roughly
+#     2D (both directions) or D (one-way), depending on where it is injected.
+#   - The health-probe RTT measured by the adapter still reflects whatever the
+#     underlying TCP connection observes PLUS any emulated delay applied on
+#     that specific probe.  Because bare requests.get() creates a new TCP
+#     connection per call, the measured RTT includes handshake overhead.
+#   - The paper's 43 ms figure is an OBSERVED RTT from their physical testbed,
+#     not an application-layer parameter.  We store it as a reference field
+#     (`rtt_reference_ms`) for documentation purposes; it does not drive the
+#     throttle logic.
+#
+# The GOOD / MODERATE / POOR scenarios are OUR experimental scenario
+# parameters derived conceptually from the Rosevin reference.  They were NOT
+# directly read from the paper — the paper does not define these three tiers.
+# Scenario values are stored centrally here; do not scatter magic numbers
+# through the codebase.
+
+ROSEVIN_RTT_REFERENCE_MS: float = 43.0     # ms — paper-reported RTT (observed)
+ROSEVIN_BANDWIDTH_MBPS: float = 186.0      # Mbps — paper-reported edge↔cloud BW
+
 SCENARIOS: dict[str, NetworkEmulationConfig] = {
+    # ── rosevin_baseline ────────────────────────────────────────────────
+    # Represents the paper's reported cloud↔edge reference conditions.
+    # client_edge path is left at nominal good-ish conditions (no paper value
+    # available for the client-to-edge segment).
+    # delay_ms here is application-layer injected delay.  Given the paper RTT
+    # reference of 43 ms round-trip, a one-way injected delay of 21 ms is used
+    # as a rough approximation.  This is explicitly documented as an
+    # approximation and must NOT be read as "measured RTT = 21 ms".
+    "rosevin_baseline": NetworkEmulationConfig(
+        scenario_name="rosevin_baseline",
+        client_edge=NetworkPathEmulationConfig(bandwidth_mbps=50.0, delay_ms=10.0),
+        edge_cloud=NetworkPathEmulationConfig(
+            bandwidth_mbps=ROSEVIN_BANDWIDTH_MBPS,   # ≈ 186 Mbps (paper reference)
+            delay_ms=21.0,                           # one-way approx of 43 ms RTT
+        ),
+    ),
+    # ── good ────────────────────────────────────────────────────────────
+    # Favorable network conditions substantially better than the Rosevin
+    # reference.  Intended to represent a well-provisioned CDN-like edge.
     "good": NetworkEmulationConfig(
         scenario_name="good",
         client_edge=NetworkPathEmulationConfig(bandwidth_mbps=20.0, delay_ms=5.0),
-        edge_cloud=NetworkPathEmulationConfig(bandwidth_mbps=100.0, delay_ms=2.0),
+        edge_cloud=NetworkPathEmulationConfig(bandwidth_mbps=500.0, delay_ms=5.0),
     ),
+    # ── moderate ────────────────────────────────────────────────────────
+    # Network conditions broadly centered around the Rosevin reference:
+    # edge_cloud bandwidth is reduced to roughly the paper's 186 Mbps level,
+    # client_edge is set to a typical consumer broadband scenario (5–10 Mbps).
     "moderate": NetworkEmulationConfig(
         scenario_name="moderate",
-        client_edge=NetworkPathEmulationConfig(bandwidth_mbps=5.0, delay_ms=30.0),
-        edge_cloud=NetworkPathEmulationConfig(bandwidth_mbps=20.0, delay_ms=10.0),
+        client_edge=NetworkPathEmulationConfig(bandwidth_mbps=8.0, delay_ms=25.0),
+        edge_cloud=NetworkPathEmulationConfig(bandwidth_mbps=186.0, delay_ms=21.0),
     ),
+    # ── poor ────────────────────────────────────────────────────────────
+    # Substantially degraded conditions: low client bandwidth, high latency,
+    # and significantly constrained edge↔cloud link.
     "poor": NetworkEmulationConfig(
         scenario_name="poor",
         client_edge=NetworkPathEmulationConfig(bandwidth_mbps=1.0, delay_ms=100.0),
-        edge_cloud=NetworkPathEmulationConfig(bandwidth_mbps=5.0, delay_ms=50.0),
+        edge_cloud=NetworkPathEmulationConfig(bandwidth_mbps=20.0, delay_ms=60.0),
     ),
+    # ── disabled ────────────────────────────────────────────────────────
+    # No emulation: bare passthrough with no delay or throttle.
     "disabled": NetworkEmulationConfig(
         enabled=False,
         scenario_name="disabled",
@@ -227,6 +281,9 @@ class EmulatedHttpAdapter:
                     elapsed = time.monotonic() - chunk_start
                     sleep_needed = expected_duration - elapsed
                     if sleep_needed > 0:
+                        # Measured throughput may deviate slightly from the
+                        # configured target because time.sleep() is subject to
+                        # OS scheduler granularity and scheduling jitter.
                         time.sleep(sleep_needed)
             content = buf.getvalue()
         else:

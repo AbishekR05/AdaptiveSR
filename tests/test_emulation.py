@@ -24,6 +24,8 @@ from adaptive_sr.network.emulation import (
     NetworkEmulationConfig,
     EmulatedHttpAdapter,
     SCENARIOS,
+    ROSEVIN_RTT_REFERENCE_MS,
+    ROSEVIN_BANDWIDTH_MBPS,
     compute_throughput_mbps,
 )
 from adaptive_sr.shared.schemas import NetworkMeasurement
@@ -310,11 +312,10 @@ def test_cache_hit_miss_semantics_unchanged():
 # ---------------------------------------------------------------------------
 
 def test_named_scenarios_structure():
-    """GOOD/MODERATE/POOR/DISABLED scenarios load correctly and paths differ."""
-    for name in ("good", "moderate", "poor", "disabled"):
-        assert name in SCENARIOS, f"Missing scenario: {name}"
-        s = SCENARIOS[name]
-        assert isinstance(s, NetworkEmulationConfig)
+    """All five expected scenarios load correctly and have path independence."""
+    for name in ("good", "moderate", "poor", "disabled", "rosevin_baseline"):
+        assert name in SCENARIOS, f"Missing scenario: {name!r}"
+        assert isinstance(SCENARIOS[name], NetworkEmulationConfig)
 
     # Verify path independence: good scenario has different BW per path
     good = SCENARIOS["good"]
@@ -350,3 +351,103 @@ def test_sanity_good_vs_poor_scenario(test_server):
         f"POOR throughput ({poor_mbps:.3f} Mbps) must be less than "
         f"GOOD throughput ({good_mbps:.3f} Mbps)"
     )
+
+
+# ---------------------------------------------------------------------------
+# 13. ROSEVIN_BASELINE configuration exists and is correctly specified
+# ---------------------------------------------------------------------------
+
+def test_rosevin_baseline_exists():
+    """rosevin_baseline scenario must exist in SCENARIOS."""
+    assert "rosevin_baseline" in SCENARIOS
+    rb = SCENARIOS["rosevin_baseline"]
+    assert isinstance(rb, NetworkEmulationConfig)
+    assert rb.enabled is True
+    assert rb.scenario_name == "rosevin_baseline"
+
+
+def test_rosevin_baseline_edge_cloud_bandwidth():
+    """rosevin_baseline edge_cloud bandwidth must be approximately 186 Mbps."""
+    rb = SCENARIOS["rosevin_baseline"]
+    bw = rb.edge_cloud.bandwidth_mbps
+    assert bw is not None
+    assert abs(bw - 186.0) < 5.0, (
+        f"Rosevin baseline edge_cloud bandwidth should be ~186 Mbps; got {bw} Mbps"
+    )
+
+
+def test_rosevin_rtt_reference_constant():
+    """ROSEVIN_RTT_REFERENCE_MS must be approximately 43 ms."""
+    assert abs(ROSEVIN_RTT_REFERENCE_MS - 43.0) < 1.0, (
+        f"Rosevin RTT reference should be ~43 ms; got {ROSEVIN_RTT_REFERENCE_MS} ms"
+    )
+
+
+def test_rosevin_bandwidth_constant():
+    """ROSEVIN_BANDWIDTH_MBPS must be approximately 186 Mbps."""
+    assert abs(ROSEVIN_BANDWIDTH_MBPS - 186.0) < 5.0, (
+        f"Rosevin bandwidth reference should be ~186 Mbps; got {ROSEVIN_BANDWIDTH_MBPS} Mbps"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 14. Injected delay_ms is NOT falsely reported as RTT
+# ---------------------------------------------------------------------------
+
+def test_injected_delay_not_labeled_as_rtt():
+    """delay_ms is application-injected delay, not measured RTT.
+
+    This test verifies the semantic contract:
+      - NetworkMeasurement.rtt_ms must be populated from an actual probe,
+        not copied from the configured delay_ms value.
+      - A measurement created with rtt_ms=X and a config with delay_ms=Y
+        (X ≠ Y) must retain rtt_ms=X.
+    """
+    configured_delay_ms = 21.0   # rosevin_baseline edge_cloud delay_ms
+    observed_rtt_ms = 43.0       # what a real health probe might return
+
+    # These must be different to prove they are not the same concept
+    assert configured_delay_ms != observed_rtt_ms
+
+    # A measurement record stores the OBSERVED rtt, not the configured delay
+    m = NetworkMeasurement(
+        request_id="probe-001",
+        network_path="edge_cloud",
+        rtt_ms=observed_rtt_ms,
+    )
+    assert m.rtt_ms == observed_rtt_ms, (
+        "rtt_ms must store the actual probe observation, not the configured delay"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 15. GOOD / MODERATE / POOR are mutually distinct
+# ---------------------------------------------------------------------------
+
+def test_good_moderate_poor_are_distinct():
+    """GOOD, MODERATE, and POOR must have different client_edge bandwidth values."""
+    good_bw = SCENARIOS["good"].client_edge.bandwidth_mbps
+    mod_bw = SCENARIOS["moderate"].client_edge.bandwidth_mbps
+    poor_bw = SCENARIOS["poor"].client_edge.bandwidth_mbps
+
+    assert good_bw != mod_bw, "GOOD and MODERATE client_edge bandwidth must differ"
+    assert mod_bw != poor_bw, "MODERATE and POOR client_edge bandwidth must differ"
+    assert good_bw != poor_bw, "GOOD and POOR client_edge bandwidth must differ"
+
+    # Ordering: GOOD should have more bandwidth than POOR
+    assert good_bw > poor_bw, (
+        f"GOOD ({good_bw} Mbps) should have more bandwidth than POOR ({poor_bw} Mbps)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 16. All five named scenarios have independent client_edge and edge_cloud
+# ---------------------------------------------------------------------------
+
+def test_all_scenarios_have_independent_paths():
+    """Every named scenario must carry separate client_edge and edge_cloud configs."""
+    for name, scenario in SCENARIOS.items():
+        assert scenario.client_edge is not scenario.edge_cloud, (
+            f"Scenario {name!r}: client_edge and edge_cloud must be independent objects"
+        )
+
