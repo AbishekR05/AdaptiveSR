@@ -50,3 +50,66 @@ class EdgeTelemetry(BaseModel):
     rtt: Optional[float] = None  # Edge -> Cloud RTT
     sr_processing_time: Optional[float] = 0.0  # Placeholder for future VSR
 
+
+from typing import Union, Literal
+from pydantic import Field, field_validator, model_validator
+
+class VideoRepresentation(BaseModel):
+    representation_id: str
+    width: int = Field(..., gt=0)
+    height: int = Field(..., gt=0)
+    resolution_label: str
+    bitrate_kbps: int = Field(..., gt=0)
+    codec: str
+    fps: Union[int, Literal["source"]]
+
+    @field_validator("codec")
+    @classmethod
+    def validate_codec(cls, v: str) -> str:
+        supported_codecs = {"h264", "h265", "hevc", "vp9", "av1"}
+        if v.lower() not in supported_codecs:
+            raise ValueError(f"Unsupported codec: {v}. Supported codecs are: {supported_codecs}")
+        return v.lower()
+
+    @field_validator("fps")
+    @classmethod
+    def validate_fps(cls, v: Union[int, str]) -> Union[int, str]:
+        if isinstance(v, int):
+            if v <= 0:
+                raise ValueError("FPS must be a positive integer.")
+            if v not in {30, 60, 120}:
+                raise ValueError("FPS must be one of 30, 60, 120.")
+        elif isinstance(v, str):
+            if v != "source":
+                raise ValueError("FPS string value must be 'source'.")
+        return v
+
+    def materialize(self, source_fps: int) -> 'VideoRepresentation':
+        """Materializes the representation by resolving 'source' FPS to the actual source FPS."""
+        resolved_fps = source_fps if self.fps == "source" else self.fps
+        return VideoRepresentation(
+            representation_id=self.representation_id,
+            width=self.width,
+            height=self.height,
+            resolution_label=self.resolution_label,
+            bitrate_kbps=self.bitrate_kbps,
+            codec=self.codec,
+            fps=resolved_fps
+        )
+
+class RepresentationConfig(BaseModel):
+    representations: List[VideoRepresentation]
+
+    @model_validator(mode="after")
+    def validate_unique_representations(self) -> 'RepresentationConfig':
+        # Unique representation IDs
+        ids = [r.representation_id for r in self.representations]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate representation IDs are not allowed.")
+
+        # No duplicate resolutions (width/height)
+        resolutions = [(r.width, r.height) for r in self.representations]
+        if len(resolutions) != len(set(resolutions)):
+            raise ValueError("Duplicate resolution configurations (width/height) are not allowed.")
+        return self
+
