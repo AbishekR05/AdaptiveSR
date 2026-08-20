@@ -44,31 +44,31 @@ def source_meta_30fps():
 
 @pytest.fixture
 def logical_timeline_30fps():
-    # 3 chunks of 1.0s (30 frames each)
+    # 3 chunks of 1.0s (30 frames each at 30 FPS source)
     return [
         {
             "chunk_id": "0000",
-            "start_frame": 0,
-            "end_frame": 29,
             "start_time_seconds": 0.0,
             "end_time_seconds": 1.0,
-            "duration_seconds": 1.0
+            "duration_seconds": 1.0,
+            "start_frame": 0,
+            "end_frame": 29
         },
         {
             "chunk_id": "0001",
-            "start_frame": 30,
-            "end_frame": 59,
             "start_time_seconds": 1.0,
             "end_time_seconds": 2.0,
-            "duration_seconds": 1.0
+            "duration_seconds": 1.0,
+            "start_frame": 30,
+            "end_frame": 59
         },
         {
             "chunk_id": "0002",
-            "start_frame": 60,
-            "end_frame": 89,
             "start_time_seconds": 2.0,
             "end_time_seconds": 3.0,
-            "duration_seconds": 1.0
+            "duration_seconds": 1.0,
+            "start_frame": 60,
+            "end_frame": 89
         }
     ]
 
@@ -93,7 +93,6 @@ def test_valid_mapping_multiple_representations_accepted(base_config, source_met
             )
             
     mapping = RepresentationChunkMapping(representation_chunks=chunks)
-    # Must validate cleanly without raising exceptions
     mapping.validate_invariants(base_config, source_meta_30fps, logical_timeline_30fps)
 
 def test_one_representation_multiple_chunks_accepted(source_meta_30fps, logical_timeline_30fps):
@@ -132,7 +131,6 @@ def test_one_representation_multiple_chunks_accepted(source_meta_30fps, logical_
 def test_missing_representation_chunk_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
     """Verifies that if any configured representation is missing a mapped chunk, validation fails."""
     chunks = []
-    # Map all chunks for 360p, but omit chunk 0002 for 720p
     for c in logical_timeline_30fps:
         chunks.append(
             RepresentationChunk(
@@ -147,7 +145,7 @@ def test_missing_representation_chunk_rejected(base_config, source_meta_30fps, l
                 size_bytes=10000
             )
         )
-    for c in logical_timeline_30fps[:2]:  # Only first two chunks for 720p!
+    for c in logical_timeline_30fps[:2]:  # Omit chunk 0002 for 720p
         chunks.append(
             RepresentationChunk(
                 chunk_id=c["chunk_id"],
@@ -173,7 +171,7 @@ def test_unknown_representation_id_rejected(base_config, source_meta_30fps, logi
         chunks.append(
             RepresentationChunk(
                 chunk_id=c["chunk_id"],
-                representation_id="1080p",  # Non-existent in base_config!
+                representation_id="1080p",  # Non-existent in base_config
                 frame_start=c["start_frame"],
                 frame_end=c["end_frame"],
                 start_time_seconds=c["start_time_seconds"],
@@ -206,7 +204,7 @@ def test_duplicate_representation_chunk_pairs_rejected(base_config, source_meta_
                     size_bytes=10000
                 )
             )
-    # Add duplicate entry for (360p, 0001)
+    # Add duplicate mapping
     chunks.append(
         RepresentationChunk(
             chunk_id="0001",
@@ -225,15 +223,14 @@ def test_duplicate_representation_chunk_pairs_rejected(base_config, source_meta_
         mapping.validate_invariants(base_config, source_meta_30fps, logical_timeline_30fps)
     assert "Duplicate mapping entry for (representation, chunk)" in str(exc_info.value)
 
-def test_mismatched_frame_ranges_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
-    """Verifies that frame ranges deviating from the authoritative Step 1 timeline are rejected."""
+def test_mismatched_frame_count_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
+    """Verifies that frame ranges inconsistent with logical duration and representation FPS are rejected."""
     chunks = []
     for rep in ["360p", "720p"]:
         for c in logical_timeline_30fps:
-            # Introduce frame mismatch in chunk 0001 of 720p
             f_end = c["end_frame"]
             if rep == "720p" and c["chunk_id"] == "0001":
-                f_end += 5
+                f_end += 5  # Deviates from duration * 30 FPS!
             chunks.append(
                 RepresentationChunk(
                     chunk_id=c["chunk_id"],
@@ -250,10 +247,10 @@ def test_mismatched_frame_ranges_rejected(base_config, source_meta_30fps, logica
     mapping = RepresentationChunkMapping(representation_chunks=chunks)
     with pytest.raises(ValueError) as exc_info:
         mapping.validate_invariants(base_config, source_meta_30fps, logical_timeline_30fps)
-    assert "Frame range mismatch for chunk '0001'" in str(exc_info.value)
+    assert "Frame count inconsistency for chunk '0001'" in str(exc_info.value)
 
 def test_mismatched_timestamps_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
-    """Verifies that timestamp ranges deviating from the authoritative timeline are rejected."""
+    """Verifies that logical timestamp ranges deviating from the authoritative timeline are rejected."""
     chunks = []
     for rep in ["360p", "720p"]:
         for c in logical_timeline_30fps:
@@ -278,15 +275,14 @@ def test_mismatched_timestamps_rejected(base_config, source_meta_30fps, logical_
         mapping.validate_invariants(base_config, source_meta_30fps, logical_timeline_30fps)
     assert "Timestamp range mismatch for chunk '0001'" in str(exc_info.value)
 
-def test_chunk_gaps_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
-    """Verifies that frame gaps between chunks are rejected."""
+def test_local_frame_gaps_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
+    """Verifies that frame gaps inside representation-local indexes are rejected."""
     chunks = []
-    # Create gap in 360p by modifying start frame of chunk 0001
     for rep in ["360p", "720p"]:
         for c in logical_timeline_30fps:
             f_start = c["start_frame"]
             if rep == "360p" and c["chunk_id"] == "0001":
-                f_start += 2 # Creates gap between 29 and 32!
+                f_start += 2 # Creates frame gap on 360p local indexing
             chunks.append(
                 RepresentationChunk(
                     chunk_id=c["chunk_id"],
@@ -300,13 +296,11 @@ def test_chunk_gaps_rejected(base_config, source_meta_30fps, logical_timeline_30
                     size_bytes=10000
                 )
             )
-    # We must patch the logical timeline to match the modified chunks so we bypass the timeline check,
-    # specifically focusing on verifying the sequence/gap checks!
     patched_timeline = [
         dict(c, start_frame=(c["start_frame"] + 2 if c["chunk_id"] == "0001" else c["start_frame"]))
         for c in logical_timeline_30fps
     ]
-    # For 720p to match the new timeline, we must also apply the shift
+    # For 720p to match the timeline checks, apply frame offset shift
     for rc in chunks:
         if rc.representation_id == "720p" and rc.chunk_id == "0001":
             rc.frame_start += 2
@@ -314,50 +308,43 @@ def test_chunk_gaps_rejected(base_config, source_meta_30fps, logical_timeline_30
     mapping = RepresentationChunkMapping(representation_chunks=chunks)
     with pytest.raises(ValueError) as exc_info:
         mapping.validate_invariants(base_config, source_meta_30fps, patched_timeline)
-    assert "Gap detected between chunk '0000'" in str(exc_info.value)
+    assert "Local frame gap detected between chunk '0000'" in str(exc_info.value)
 
-def test_chunk_overlaps_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
-    """Verifies that frame overlaps between chunks are rejected."""
-    chunks = []
-    # Create overlap by extending chunk 0000 end_frame to 35 (overlapping chunk 0001 starting at 30)
-    for rep in ["360p", "720p"]:
-        for c in logical_timeline_30fps:
-            f_end = c["end_frame"]
-            if rep == "360p" and c["chunk_id"] == "0000":
-                f_end = 35
-            chunks.append(
-                RepresentationChunk(
-                    chunk_id=c["chunk_id"],
-                    representation_id=rep,
-                    frame_start=c["start_frame"],
-                    frame_end=f_end,
-                    start_time_seconds=c["start_time_seconds"],
-                    end_time_seconds=c["end_time_seconds"],
-                    duration_seconds=c["duration_seconds"],
-                    file_path="chunks/chunk.mp4",
-                    size_bytes=10000
-                )
-            )
-    patched_timeline = [
-        dict(c, end_frame=(35 if c["chunk_id"] == "0000" else c["end_frame"]))
-        for c in logical_timeline_30fps
+def test_local_frame_overlaps_rejected(base_config):
+    """Verifies that frame overlaps inside representation-local indexes are rejected."""
+    # Use timeline with 2.5s duration total:
+    # chunk 0000: 1.0s, chunk 0001: 1.0s, chunk 0002: 0.5s
+    custom_source_meta = {"frame_count": 60, "fps": 24.0} # 60 / 24 = 2.5 seconds
+    timeline = [
+        {
+            "chunk_id": "0000",
+            "start_time_seconds": 0.0,
+            "end_time_seconds": 1.0,
+            "duration_seconds": 1.0,
+            "start_frame": 0,
+            "end_frame": 29
+        },
+        {
+            "chunk_id": "0001",
+            "start_time_seconds": 1.0,
+            "end_time_seconds": 2.0,
+            "duration_seconds": 1.0,
+            "start_frame": 15,  # Overlap starting at 15!
+            "end_frame": 44   # 30 frames total (internally consistent for 1.0s at 30 FPS)
+        },
+        {
+            "chunk_id": "0002",
+            "start_time_seconds": 2.0,
+            "end_time_seconds": 2.5,
+            "duration_seconds": 0.5,
+            "start_frame": 45,
+            "end_frame": 59   # 15 frames total (consistent for 0.5s at 30 FPS)
+        }
     ]
-    for rc in chunks:
-        if rc.representation_id == "720p" and rc.chunk_id == "0000":
-            rc.frame_end = 35
-            
-    mapping = RepresentationChunkMapping(representation_chunks=chunks)
-    with pytest.raises(ValueError) as exc_info:
-        mapping.validate_invariants(base_config, source_meta_30fps, patched_timeline)
-    assert "Overlap detected between chunk '0000'" in str(exc_info.value)
-
-def test_non_monotonic_chunk_ids_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
-    """Verifies that non-monotonic chunk IDs are rejected."""
+    
     chunks = []
-    # Insert chunks out of order
     for rep in ["360p", "720p"]:
-        # Order: 0000, 0002, 0001
-        for c in [logical_timeline_30fps[0], logical_timeline_30fps[2], logical_timeline_30fps[1]]:
+        for c in timeline:
             chunks.append(
                 RepresentationChunk(
                     chunk_id=c["chunk_id"],
@@ -371,36 +358,69 @@ def test_non_monotonic_chunk_ids_rejected(base_config, source_meta_30fps, logica
                     size_bytes=10000
                 )
             )
-    # The validate_invariants sorts chunks internally before doing chronological checking,
-    # but we can check if chunk IDs overlap or if we mock sorting behavior.
-    # Wait! If validate_invariants sorts by chunk_id, it will sort them back to [0000, 0001, 0002]!
-    # So sorting makes it chronological.
-    # Wait, how does it fail? It validates gaps/overlaps. If they are in the list, sorting resolves the order.
-    # What if a chunk has a smaller ID but larger frame range? That is caught by overlap/gap check.
-    # What if chunk_id is duplicate? Caught by duplicate pair check.
-    # Let's verify that we sort by chunk_id and then check chronological start/end frame ordering.
-    # In `validate_invariants`, if chunk IDs are monotonic, is it checked?
-    # Yes, we sort by chunk_id. If after sorting, frame ranges are not sequential, it raises gap/overlap.
-    # This is fully handled!
+            
+    mapping = RepresentationChunkMapping(representation_chunks=chunks)
+    with pytest.raises(ValueError) as exc_info:
+        mapping.validate_invariants(base_config, custom_source_meta, timeline)
+    assert "Local frame overlap detected between chunk '0000'" in str(exc_info.value)
 
-def test_variable_final_chunk_duration_accepted(base_config, source_meta_30fps):
+def test_non_monotonic_chunk_ids_rejected(base_config, source_meta_30fps, logical_timeline_30fps):
+    """Verifies that non-monotonic chunk sequencing raises validation errors."""
+    chunks = []
+    for rep in ["360p", "720p"]:
+        for i, c in enumerate(logical_timeline_30fps):
+            t_start = c["start_time_seconds"]
+            t_end = c["end_time_seconds"]
+            if c["chunk_id"] == "0001":
+                t_start = 2.5
+                t_end = 3.5
+            chunks.append(
+                RepresentationChunk(
+                    chunk_id=c["chunk_id"],
+                    representation_id=rep,
+                    frame_start=c["start_frame"],
+                    frame_end=c["end_frame"],
+                    start_time_seconds=t_start,
+                    end_time_seconds=t_end,
+                    duration_seconds=c["duration_seconds"],
+                    file_path="chunks/chunk.mp4",
+                    size_bytes=10000
+                )
+            )
+    patched_timeline = [
+        dict(c, start_time_seconds=(2.5 if c["chunk_id"] == "0001" else c["start_time_seconds"]),
+                end_time_seconds=(3.5 if c["chunk_id"] == "0001" else c["end_time_seconds"]))
+        for c in logical_timeline_30fps
+    ]
+    for rc in chunks:
+        if rc.representation_id == "720p" and rc.chunk_id == "0001":
+            rc.start_time_seconds = 2.5
+            rc.end_time_seconds = 3.5
+            
+    mapping = RepresentationChunkMapping(representation_chunks=chunks)
+    with pytest.raises(ValueError) as exc_info:
+        mapping.validate_invariants(base_config, source_meta_30fps, patched_timeline)
+    assert "Overlap detected" in str(exc_info.value) or "Gap detected" in str(exc_info.value)
+
+def test_variable_final_chunk_duration_accepted(base_config):
     """Verifies that variable final chunk durations and non-2-second target chunk assumptions are accepted."""
+    custom_source_meta = {"frame_count": 83, "fps": 83 / 2.75} # 2.75s expected duration
     timeline = [
         {
             "chunk_id": "0000",
-            "start_frame": 0,
-            "end_frame": 59,
             "start_time_seconds": 0.0,
             "end_time_seconds": 2.0,
-            "duration_seconds": 2.0
+            "duration_seconds": 2.0,
+            "start_frame": 0,
+            "end_frame": 59
         },
         {
             "chunk_id": "0001",
-            "start_frame": 60,
-            "end_frame": 89,
             "start_time_seconds": 2.0,
-            "end_time_seconds": 2.75, # 0.75s duration (variable final chunk!)
-            "duration_seconds": 0.75
+            "end_time_seconds": 2.75,
+            "duration_seconds": 0.75,
+            "start_frame": 60,
+            "end_frame": 82
         }
     ]
     chunks = []
@@ -420,49 +440,105 @@ def test_variable_final_chunk_duration_accepted(base_config, source_meta_30fps):
                 )
             )
     mapping = RepresentationChunkMapping(representation_chunks=chunks)
-    # Must pass validation showing it supports dynamic durations
-    mapping.validate_invariants(base_config, source_meta_30fps, timeline)
+    mapping.validate_invariants(base_config, custom_source_meta, timeline)
 
-def test_fps_timelines_preserved(base_config):
-    """Verifies that source timeline configurations at 30, 60, and 120 FPS scale frame ranges correctly."""
-    # Test cases for 30, 60, 120 FPS
-    for fps in [30, 60, 120]:
-        meta = {"frame_count": fps * 3, "fps": float(fps)}
+def test_fps_combinations():
+    """
+    Verifies that the mapping validates correctly under all specified source and representation FPS scenarios:
+    1. 60 FPS source + 60 FPS representation.
+    2. 60 FPS source + 30 FPS representation.
+    3. 60 FPS source + 120 FPS representation.
+    4. 120 FPS source + 30 FPS representation.
+    5. 120 FPS source + 60 FPS representation.
+    6. 120 FPS source + 120 FPS representation.
+    7. 30 FPS source + 30 FPS representation.
+    """
+    # Define representation configuration containing 30, 60, and 120 FPS streams
+    config = RepresentationConfig(
+        representations=[
+            VideoRepresentation(representation_id="rep_30", width=640, height=360, resolution_label="360p", bitrate_kbps=800, codec="h264", fps=30),
+            VideoRepresentation(representation_id="rep_60", width=1280, height=720, resolution_label="720p", bitrate_kbps=2500, codec="h264", fps=60),
+            VideoRepresentation(representation_id="rep_120", width=1920, height=1080, resolution_label="1080p", bitrate_kbps=6000, codec="h264", fps=120)
+        ]
+    )
+
+    # Scenarios: (source_fps, representation_id, rep_fps)
+    scenarios = [
+        # 60 FPS Source
+        (60, "rep_60", 60),
+        (60, "rep_30", 30),
+        (60, "rep_120", 120),
+        # 120 FPS Source
+        (120, "rep_30", 30),
+        (120, "rep_60", 60),
+        (120, "rep_120", 120),
+        # 30 FPS Source
+        (30, "rep_30", 30)
+    ]
+
+    for src_fps, rep_id, rep_fps in scenarios:
+        # Create authoritative timeline of 3.0s duration
+        source_meta = {"frame_count": src_fps * 3, "fps": float(src_fps)}
         timeline = [
             {
                 "chunk_id": "0000",
-                "start_frame": 0,
-                "end_frame": (fps * 2) - 1,
                 "start_time_seconds": 0.0,
                 "end_time_seconds": 2.0,
-                "duration_seconds": 2.0
+                "duration_seconds": 2.0,
+                "start_frame": 0,
+                "end_frame": (src_fps * 2) - 1
             },
             {
                 "chunk_id": "0001",
-                "start_frame": fps * 2,
-                "end_frame": (fps * 3) - 1,
                 "start_time_seconds": 2.0,
                 "end_time_seconds": 3.0,
-                "duration_seconds": 1.0
+                "duration_seconds": 1.0,
+                "start_frame": src_fps * 2,
+                "end_frame": (src_fps * 3) - 1
             }
         ]
-        
-        chunks = []
-        for rep in ["360p", "720p"]:
-            for c in timeline:
-                chunks.append(
-                    RepresentationChunk(
-                        chunk_id=c["chunk_id"],
-                        representation_id=rep,
-                        frame_start=c["start_frame"],
-                        frame_end=c["end_frame"],
-                        start_time_seconds=c["start_time_seconds"],
-                        end_time_seconds=c["end_time_seconds"],
-                        duration_seconds=c["duration_seconds"],
-                        file_path="chunks/chunk.mp4",
-                        size_bytes=10000
-                    )
-                )
+
+        # Map representation chunks. Note that the frame boundaries for the representation
+        # chunks are local to that representation's FPS (duration * rep_fps).
+        chunks = [
+            RepresentationChunk(
+                chunk_id="0000",
+                representation_id=rep_id,
+                frame_start=0,
+                frame_end=(rep_fps * 2) - 1,
+                start_time_seconds=0.0,
+                end_time_seconds=2.0,
+                duration_seconds=2.0,
+                file_path=f"chunks/{rep_id}_0000.mp4",
+                size_bytes=20000
+            ),
+            RepresentationChunk(
+                chunk_id="0001",
+                representation_id=rep_id,
+                frame_start=rep_fps * 2,
+                frame_end=(rep_fps * 3) - 1,
+                start_time_seconds=2.0,
+                end_time_seconds=3.0,
+                duration_seconds=1.0,
+                file_path=f"chunks/{rep_id}_0001.mp4",
+                size_bytes=10000
+            )
+        ]
+
+        # Use a scoped representation config containing only the tested representation for isolation
+        scoped_config = RepresentationConfig(
+            representations=[next(r for r in config.representations if r.representation_id == rep_id)]
+        )
+
         mapping = RepresentationChunkMapping(representation_chunks=chunks)
-        # Verify that matching FPS timelines resolve and validate without errors
-        mapping.validate_invariants(base_config, meta, timeline)
+        
+        # Verify logical temporal range remains identical while allowing frame ranges to differ
+        mapping.validate_invariants(scoped_config, source_meta, timeline)
+        
+        # Verify specific frame count bounds
+        assert chunks[0].frame_end - chunks[0].frame_start + 1 == rep_fps * 2
+        assert chunks[1].frame_end - chunks[1].frame_start + 1 == rep_fps
+        assert chunks[0].start_time_seconds == timeline[0]["start_time_seconds"]
+        assert chunks[0].end_time_seconds == timeline[0]["end_time_seconds"]
+        assert chunks[1].start_time_seconds == timeline[1]["start_time_seconds"]
+        assert chunks[1].end_time_seconds == timeline[1]["end_time_seconds"]

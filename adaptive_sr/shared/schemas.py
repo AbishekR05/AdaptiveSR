@@ -166,6 +166,12 @@ class RepresentationChunkMapping(BaseModel):
         """
         valid_rep_ids = {r.representation_id for r in config.representations}
         
+        # Build map of representation ID to resolved/materialized FPS
+        rep_id_to_fps = {}
+        for r in config.representations:
+            resolved_fps = source_metadata["fps"] if r.fps == "source" else r.fps
+            rep_id_to_fps[r.representation_id] = resolved_fps
+        
         rep_to_chunks = {}
         for rc in self.representation_chunks:
             if rc.representation_id not in valid_rep_ids:
@@ -202,10 +208,9 @@ class RepresentationChunkMapping(BaseModel):
                     f"Unknown chunk IDs mapped for representation '{rep_id}': {extra}"
                 )
                 
+        # A. Logical temporal boundaries are identical across representations and match Step 1
         for p_chunk in profile_chunks:
             c_id = p_chunk["chunk_id"]
-            expected_start_frame = p_chunk["start_frame"]
-            expected_end_frame = p_chunk["end_frame"]
             expected_start_time = p_chunk["start_time_seconds"]
             expected_end_time = p_chunk["end_time_seconds"]
             expected_duration = p_chunk["duration_seconds"]
@@ -214,13 +219,6 @@ class RepresentationChunkMapping(BaseModel):
                 matching_rc = next((c for c in chunks_for_rep if c.chunk_id == c_id), None)
                 if matching_rc is None:
                     raise ValueError(f"Logical chunk '{c_id}' not found in representation '{rep_id}'.")
-                    
-                if matching_rc.frame_start != expected_start_frame or matching_rc.frame_end != expected_end_frame:
-                    raise ValueError(
-                        f"Frame range mismatch for chunk '{c_id}' under representation '{rep_id}': "
-                        f"expected ({expected_start_frame}, {expected_end_frame}), "
-                        f"got ({matching_rc.frame_start}, {matching_rc.frame_end})."
-                    )
                     
                 if matching_rc.start_time_seconds != expected_start_time or matching_rc.end_time_seconds != expected_end_time:
                     raise ValueError(
@@ -235,21 +233,33 @@ class RepresentationChunkMapping(BaseModel):
                         f"expected {expected_duration}, got {matching_rc.duration_seconds}."
                     )
 
+        # Validate representation-local frame ranges and chronological sequences
         for rep_id, chunks_for_rep in rep_to_chunks.items():
+            rep_fps = rep_id_to_fps[rep_id]
             sorted_chunks = sorted(chunks_for_rep, key=lambda x: x.chunk_id)
             
+            # C. Each representation has a valid ordered frame range: first chunk starts at local frame 0
             if sorted_chunks[0].frame_start != 0:
                 raise ValueError(
                     f"First chunk '{sorted_chunks[0].chunk_id}' for representation '{rep_id}' "
-                    f"does not start at frame 0 (starts at {sorted_chunks[0].frame_start})."
+                    f"does not start at local frame 0 (starts at {sorted_chunks[0].frame_start})."
                 )
                 
-            total_source_frames = source_metadata["frame_count"]
-            if sorted_chunks[-1].frame_end != total_source_frames - 1:
+            # I. First logical chunk begins at the source timeline start (0.0s)
+            if sorted_chunks[0].start_time_seconds != 0.0:
+                raise ValueError(
+                    f"First chunk '{sorted_chunks[0].chunk_id}' for representation '{rep_id}' "
+                    f"does not start at time 0.0s (starts at {sorted_chunks[0].start_time_seconds})."
+                )
+                
+            # J. Final logical chunk ends at the source timeline end
+            expected_total_duration = source_metadata["frame_count"] / source_metadata["fps"]
+            # Allow minor floating point tolerances
+            if abs(sorted_chunks[-1].end_time_seconds - expected_total_duration) > 0.01:
                 raise ValueError(
                     f"Final chunk '{sorted_chunks[-1].chunk_id}' for representation '{rep_id}' "
-                    f"does not end at final frame index {total_source_frames - 1} "
-                    f"(ends at {sorted_chunks[-1].frame_end})."
+                    f"does not end at final timeline time {expected_total_duration:.3f}s "
+                    f"(ends at {sorted_chunks[-1].end_time_seconds:.3f}s)."
                 )
                 
             for idx in range(len(sorted_chunks)):
@@ -260,22 +270,50 @@ class RepresentationChunkMapping(BaseModel):
                 if rc.frame_start > rc.frame_end:
                     raise ValueError(f"Chunk '{rc.chunk_id}' frame_start > frame_end.")
                     
+                # B. Representation-local frame ranges are internally consistent with the representation's materialized FPS and logical duration
+                local_frame_count = rc.frame_end - rc.frame_start + 1
+                expected_local_frame_count = int(round(rc.duration_seconds * rep_fps))
+                # Validate that local frame count matches expected count derived from duration and rep FPS (with a tiny rounding tolerance)
+                if abs(local_frame_count - expected_local_frame_count) > 1:
+                    raise ValueError(
+                        f"Frame count inconsistency for chunk '{rc.chunk_id}' under representation '{rep_id}': "
+                        f"frame count ({local_frame_count}) does not match expected ({expected_local_frame_count}) "
+                        f"for duration {rc.duration_seconds}s at {rep_fps} FPS."
+                    )
+                    
                 if idx < len(sorted_chunks) - 1:
                     next_rc = sorted_chunks[idx + 1]
                     
+                    # F. Logical chunk ordering remains monotonic (by chunk_id)
                     if next_rc.chunk_id <= rc.chunk_id:
                         raise ValueError(f"Non-monotonic chunk IDs: {rc.chunk_id} -> {next_rc.chunk_id}")
                         
-                    if next_rc.frame_start <= rc.frame_end:
+                    # H. Logical chunks contain no temporal overlaps
+                    if next_rc.start_time_seconds < rc.end_time_seconds:
                         raise ValueError(
-                            f"Overlap detected between chunk '{rc.chunk_id}' (ends at {rc.frame_end}) "
-                            f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.frame_start}) "
+                            f"Overlap detected between chunk '{rc.chunk_id}' (ends at {rc.end_time_seconds}s) "
+                            f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.start_time_seconds}s) "
                             f"under representation '{rep_id}'."
                         )
                         
+                    # G. Logical chunks contain no temporal gaps
+                    if next_rc.start_time_seconds != rc.end_time_seconds:
+                        raise ValueError(
+                            f"Gap detected between chunk '{rc.chunk_id}' (ends at {rc.end_time_seconds}s) "
+                            f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.start_time_seconds}s) "
+                            f"under representation '{rep_id}'."
+                        )
+                        
+                    # C. Check no overlaps/gaps in representation-local frame ranges
+                    if next_rc.frame_start <= rc.frame_end:
+                        raise ValueError(
+                            f"Local frame overlap detected between chunk '{rc.chunk_id}' (ends at {rc.frame_end}) "
+                            f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.frame_start}) "
+                            f"under representation '{rep_id}'."
+                        )
                     if next_rc.frame_start != rc.frame_end + 1:
                         raise ValueError(
-                            f"Gap detected between chunk '{rc.chunk_id}' (ends at {rc.frame_end}) "
+                            f"Local frame gap detected between chunk '{rc.chunk_id}' (ends at {rc.frame_end}) "
                             f"and chunk '{next_rc.chunk_id}' (starts at {next_rc.frame_start}) "
                             f"under representation '{rep_id}'."
                         )

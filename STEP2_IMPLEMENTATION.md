@@ -50,33 +50,40 @@ We implemented `RepresentationChunk` and `RepresentationChunkMapping` in [`adapt
 * **Logical Chunk**: The authoritative temporal unit defined in Step 1. It acts as the master timeline. All representations inherit this logical timeline.
 * **Representation Chunk**: The representation-specific metadata mapping indicating the actual file path, file size in bytes, and referencing the logical boundaries.
 
-### `RepresentationChunk` Model
-Represents a chunk mapped to a representation:
-* `chunk_id` (`str`): Master chunk ID matching Step 1.
-* `representation_id` (`str`): Mapped representation identifier.
-* `frame_start` (`int`), `frame_end` (`int`): Frame bounds derived from Step 1.
-* `start_time_seconds` (`float`), `end_time_seconds` (`float`): Logical timestamps.
-* `duration_seconds` (`float`): Actual logical duration.
-* `file_path` (`str`): Path to the encoded representation chunk file.
-* `size_bytes` (`int`): Encoded file size in bytes.
+### Representation-Local Frame Ranges
+Because representations run at different framerates, the number of encoded frames for the same logical chunk differs between representations. Therefore, **frame indices are representation-local**, referring to the frame indices inside that specific representation's encoded stream rather than source-global frame indices.
+
+```text
+Same Logical Time Range
+         ↓
+   ┌───────────────┐
+   │ chunk_007     │ (Authoritative logical interval)
+   │ 14s → 16s     │ (Logical duration = 2.0s)
+   └───────┬───────┘
+           │
+      ┌────┴────┐
+      ▼         ▼
+   720p@60   720p@30
+   ~120 fr   ~60 fr   (Different representation-local frame counts)
+```
 
 ---
 
 ## 4. Mapping Invariant Rules
 
-The mapping manager validates the following **12 strict validation invariants**:
+The mapping manager validates the following **11 strict validation invariants**:
 1. **Full Coverage**: Every logical chunk maps to every configured representation.
 2. **No Duplicates**: No duplicate `(representation_id, chunk_id)` pairs are allowed.
-3. **Identical Frames**: Frame ranges must be identical across representations.
-4. **Identical Timestamps**: Logical start/end timestamps and durations must be identical across representations.
-5. **Sanity Ranges**: `frame_start <= frame_end` and `start_time_seconds <= end_time_seconds`.
-6. **Positive Duration**: `duration_seconds > 0.0`.
-7. **Monotonic Order**: Chunk indexing must be sorted chronologically and monotonically.
-8. **No Gaps**: Frame sequences must contain no gaps between consecutive chunks.
-9. **No Overlaps**: Frame sequences must contain no overlaps between chunks.
-10. **First Chunk Bound**: The first chunk starts exactly at frame 0.
-11. **Final Chunk Bound**: The final chunk ends exactly at `frame_count - 1` of the source.
-12. **Config Existence**: Mapped representation IDs must exist in the configuration.
+3. **Logical Temporal Boundaries**: Logical start/end timestamps and durations must be identical across representations and match the Step 1 authoritative timeline.
+4. **Representation-Local Consistency**: Representation-local frame counts must match the expected frame count derived from the logical duration and materialized representation FPS:
+   $$\text{local\_frame\_count} == \text{round}(\text{logical\_duration} \times \text{rep\_fps})$$
+5. **Ordered Local Range**: Each representation's local frame indices start at frame 0, sort monotonically, and have no gaps or overlaps.
+6. **Sanity Ranges**: `frame_start <= frame_end` and `start_time_seconds <= end_time_seconds`.
+7. **Positive Duration**: `duration_seconds > 0.0`.
+8. **Chronological Timestamps**: Logical chunk timestamps contain no temporal gaps or overlaps.
+9. **First Chunk Bound**: The first logical chunk starts at time 0.0s.
+10. **Final Chunk Bound**: The final logical chunk ends at the source timeline end.
+11. **Config Existence**: Mapped representation IDs must exist in the representation config.
 
 ---
 
@@ -86,12 +93,19 @@ Audio representation fields are explicitly **deferred** from the representation 
 
 ---
 
-## 6. Automated Testing
+## 6. Future Validation: Size/Bitrate Sanity Check (Step 2.3 TODO)
+> [!TIP]
+> **Step 2.3 TODO**: Once actual physical video encoding ladders exist (Step 2.3), we should implement a soft sanity check comparing:
+> $$\text{size\_bytes} \approx \frac{\text{bitrate\_kbps} \times 1000 \times \text{duration\_seconds}}{8}$$
+> This should produce warning alerts on deviation rather than rejecting the mapping, to accommodate encoding bitrate variability.
 
-* Representation validation is tested in [`tests/test_representation.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_representation.py).
+---
+
+## 7. Automated Testing
+
+* Video representation validation is tested in [`tests/test_representation.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_representation.py).
 * Mapping invariants are tested in [`tests/test_mapping.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_mapping.py) verifying:
-  * Full coverage and missing chunks detection.
-  * Collision detection for duplicate mapping pairs.
-  * Chronological sorting, gaps, and overlaps errors.
-  * Correct frame scaling on 30, 60, and 120 FPS timelines.
-  * Acceptance of variable final chunk duration (proving no hardcoded 2.0s duration assumptions).
+  * Full coverage and missing chunk checks.
+  * Local frame count checks on 30, 60, and 120 FPS mappings.
+  * Validating combinations of source FPS and representation FPS (such as 60 FPS source + 30 FPS rep).
+  * Variable final chunk duration acceptance.
