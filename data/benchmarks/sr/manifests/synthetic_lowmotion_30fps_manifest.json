@@ -1,0 +1,19 @@
+{
+    "schema_version": "1.0.0",
+    "video_id": "synthetic_lowmotion_30fps",
+    "source_file_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\videos\\synthetic_lowmotion_30fps.mp4",
+    "source_file_hash": "00b86e32502250f86dda9b7db88fcd533d20b5d72f7537692741e8250598cadf",
+    "generated_profile_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\profiles\\synthetic_lowmotion_30fps_profile.json",
+    "chunks": [
+        {
+            "chunk_id": "0000",
+            "file_path": "chunks\\synthetic_lowmotion_30fps_0000.mp4",
+            "file_hash": "60bcf09059b2ec72ab6a917bcace3d5f9b635272e2cac1605882aaa1c0af2e94"
+        },
+        {
+            "chunk_id": "0001",
+            "file_path": "chunks\\synthetic_lowmotion_30fps_0001.mp4",
+            "file_hash": "a6594612582be79f3b97bfd1b706b8172576f4a6003d39556025dd17d5ee991a"
+        }
+    ]
+}

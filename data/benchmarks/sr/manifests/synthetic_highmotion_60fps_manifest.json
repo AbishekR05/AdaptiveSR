@@ -1,0 +1,19 @@
+{
+    "schema_version": "1.0.0",
+    "video_id": "synthetic_highmotion_60fps",
+    "source_file_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\videos\\synthetic_highmotion_60fps.mp4",
+    "source_file_hash": "06decd7c3d0bebb1825423e7fac3958c8a1e26cf50088b6e95935d4d8345e2e5",
+    "generated_profile_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\profiles\\synthetic_highmotion_60fps_profile.json",
+    "chunks": [
+        {
+            "chunk_id": "0000",
+            "file_path": "chunks\\synthetic_highmotion_60fps_0000.mp4",
+            "file_hash": "36b5fb9d6e687e0a50f6debc64e3f87967f4f2a22c84ab0ed0adf07537de451d"
+        },
+        {
+            "chunk_id": "0001",
+            "file_path": "chunks\\synthetic_highmotion_60fps_0001.mp4",
+            "file_hash": "8fe28b8ae55c7b354bd47044c891643ae267c24885f36f49965757e987b780d0"
+        }
+    ]
+}

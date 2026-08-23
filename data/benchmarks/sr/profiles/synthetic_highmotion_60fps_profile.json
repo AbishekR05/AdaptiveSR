@@ -1,0 +1,108 @@
+{
+    "schema_version": "1.0.0",
+    "video_id": "synthetic_highmotion_60fps",
+    "source": {
+        "filename": "synthetic_highmotion_60fps.mp4",
+        "duration_seconds": 4.0,
+        "fps": 60.0,
+        "width": 640,
+        "height": 360,
+        "frame_count": 240,
+        "codec": "mpeg4",
+        "pixel_format": null,
+        "bitrate": null,
+        "has_audio": false
+    },
+    "profiling_config": {
+        "target_chunk_duration_seconds": 2.0,
+        "motion_temporal_window_seconds": 0.0333,
+        "aggregation": {
+            "motion": [
+                "mean",
+                "p95",
+                "max"
+            ],
+            "texture": [
+                "mean",
+                "p95"
+            ],
+            "edge_density": [
+                "mean",
+                "p95"
+            ],
+            "blur": [
+                "mean",
+                "p95"
+            ],
+            "complexity": [
+                "mean",
+                "p95",
+                "max"
+            ]
+        }
+    },
+    "chunks": [
+        {
+            "chunk_id": "0000",
+            "start_time_seconds": 0.0,
+            "end_time_seconds": 2.0,
+            "duration_seconds": 2.0,
+            "start_frame": 0,
+            "end_frame": 119,
+            "frame_count": 120,
+            "motion": {
+                "mean": 0.005800611043028322,
+                "p95": 0.006323471541394335,
+                "max": 0.006598924291938998
+            },
+            "texture_density": {
+                "mean": 0.8005070788148198,
+                "p95": 0.8081134769814574
+            },
+            "edge_density": {
+                "mean": 0.00780541087962963,
+                "p95": 0.007960069444444445
+            },
+            "blur": {
+                "mean": 1.0,
+                "p95": 1.0
+            },
+            "spatial_complexity": {
+                "mean": 0.4032647743440929,
+                "p95": 0.40708719733468296,
+                "max": 0.4076826466895985
+            }
+        },
+        {
+            "chunk_id": "0001",
+            "start_time_seconds": 2.0,
+            "end_time_seconds": 4.0,
+            "duration_seconds": 2.0,
+            "start_frame": 120,
+            "end_frame": 239,
+            "frame_count": 120,
+            "motion": {
+                "mean": 0.005864966299019609,
+                "p95": 0.006044444444444444,
+                "max": 0.00610110294117647
+            },
+            "texture_density": {
+                "mean": 0.8045178271355928,
+                "p95": 0.8116841896550685
+            },
+            "edge_density": {
+                "mean": 0.007991391782407407,
+                "p95": 0.008068793402777778
+            },
+            "blur": {
+                "mean": 1.0,
+                "p95": 1.0
+            },
+            "spatial_complexity": {
+                "mean": 0.4053234334990328,
+                "p95": 0.40889442496097655,
+                "max": 0.41115090496165735
+            }
+        }
+    ]
+}
