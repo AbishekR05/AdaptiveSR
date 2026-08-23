@@ -349,9 +349,18 @@ Step 5.3 integrates the frozen Step 4 `ProcessMonitor` via a background thread w
 ---
 
 ### 8. Automated Tests
-Tests in [`tests/test_cpu_control.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_cpu_control.py) cover all 19 functional requirements, verifying:
+Tests in [`tests/test_cpu_control.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_cpu_control.py) cover all functional requirements, verifying:
 - CPU discovery, validation, and error boundaries.
 - Thread configuration setting and verification in PyTorch and ONNX Runtime backends.
 - Safety guarantees (affinity restoration on success and exceptions).
 - ProcessMonitor background lifecycle execution, sample accumulation, and thread leak protection.
 - Downstream model adapter smoke test compatibility.
+- Context execution ordering constraints (affinity active before monitor starts).
+
+---
+
+### 9. Measurement-Control Caveats
+- **A. CPU 0 Selection Policy**: Logical CPU ID selection is deterministic and starts from core 0 (e.g., `[0, 1, 2, ...]`). Because logical core 0 typically handles OS interrupts and background services, absolute latency measurements may experience host-dependent noise. Relative comparisons between models remain consistent as the same core policy is applied uniformly across configurations.
+- **B. ProcessMonitor Contention**: The ProcessMonitor runs as a background thread inside the same benchmark process, meaning it shares the restricted CPU affinity mask. For small core configurations (especially 1 CPU), the monitor's CPU sampling overhead can introduce contention and influence latency measurements. This is a measurement-system limitation; future steps must use conservative sampling rates and document this impact when interpreting low-core results.
+- **C. Context Ordering**: The CPU affinity mask is applied and verified *before* the ProcessMonitor is started. This ensures that the monitor's background thread executes entirely within the constrained hardware layout, providing consistent resource measurements from the first sample.
+- **D. Methodological Limits**: These affinity and monitoring hooks represent experimental control mechanisms for benchmarking, not runtime resource allocation or placement schedulers.

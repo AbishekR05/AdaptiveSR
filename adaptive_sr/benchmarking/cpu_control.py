@@ -249,23 +249,41 @@ def benchmark_execution_context(
     monitor : BenchmarkProcessMonitor or None
         An optional process monitor to run during execution.
     """
-    # 1. Start ProcessMonitor (Step 5.3 §14)
-    if monitor is not None:
-        monitor.start()
-
-    # 2. Capture and Apply CPU Affinity
+    # 1. Capture original CPU affinity
     p = psutil.Process()
     previous_affinity = p.cpu_affinity()
+    monitor_started = False
+    
     try:
+        # 2. Apply requested CPU affinity
         p.cpu_affinity(config.cpu_ids)
+        
+        # 3. Verify that requested affinity is active
+        active_affinity = p.cpu_affinity()
+        if active_affinity != config.cpu_ids:
+            raise RuntimeError(
+                f"Failed to apply CPU affinity core limits. "
+                f"Requested: {config.cpu_ids}, active: {active_affinity}"
+            )
+            
+        # 4. Start ProcessMonitor (only after affinity is active)
+        if monitor is not None:
+            monitor.start()
+            monitor_started = True
+            
+        # 5. Yield to the benchmark workload
         yield
+        
     finally:
-        # 3. Restore CPU Affinity
+        # 6. Stop ProcessMonitor (guaranteed cleanup)
+        if monitor is not None and monitor_started:
+            try:
+                monitor.stop()
+            except Exception:
+                pass
+                
+        # 7. Restore original CPU affinity (guaranteed cleanup)
         try:
             p.cpu_affinity(previous_affinity)
         except Exception:
             pass
-
-        # 4. Stop ProcessMonitor
-        if monitor is not None:
-            monitor.stop()

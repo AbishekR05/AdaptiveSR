@@ -289,3 +289,46 @@ def test_step5_2_adapter_smoke_works():
     """Verifies that the Step 5.2 model execution smoke test continues to pass."""
     from tests.test_model_adapters import test_smoke_integration_with_step5_1_dataset
     test_smoke_integration_with_step5_1_dataset()
+
+
+# ---------------------------------------------------------------------------
+# 8. Step 5.3 Corrections — Execution Order Verification
+# ---------------------------------------------------------------------------
+
+def test_execution_order_affinity_before_monitoring():
+    """Verifies that CPU affinity is applied and verified before the ProcessMonitor starts."""
+    available = get_available_cpus()
+    config = CPUExecutionConfig(cpu_ids=[available[0]], num_threads=1)
+    
+    monitor = BenchmarkProcessMonitor(sample_interval=0.01)
+    original_start = monitor.start
+    affinity_active_on_start = False
+    
+    def start_wrapper():
+        nonlocal affinity_active_on_start
+        # At this exact moment, target affinity must already be active
+        if get_current_affinity() == [available[0]]:
+            affinity_active_on_start = True
+        original_start()
+        
+    monitor.start = start_wrapper
+    
+    with benchmark_execution_context(config, monitor=monitor):
+        pass
+        
+    assert affinity_active_on_start, "CPU affinity was not applied before ProcessMonitor.start() was called!"
+
+
+def test_process_monitor_runs_under_active_affinity():
+    """Verifies that the ProcessMonitor only samples after requested affinity is active."""
+    available = get_available_cpus()
+    config = CPUExecutionConfig(cpu_ids=[available[0]], num_threads=1)
+    
+    monitor = BenchmarkProcessMonitor(sample_interval=0.01)
+    
+    with benchmark_execution_context(config, monitor=monitor):
+        time.sleep(0.05)
+        assert get_current_affinity() == [available[0]]
+        
+    assert len(monitor.get_samples()) > 0
+
