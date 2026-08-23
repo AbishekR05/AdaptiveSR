@@ -61,8 +61,13 @@ class BaseSRAdapter(ABC):
         pass
 
     @abstractmethod
-    def initialize(self, device: str, scale: int) -> None:
-        """Initialize the model on the requested execution device and scale factor.
+    def initialize(
+        self,
+        device: str,
+        scale: int,
+        num_threads: Optional[int] = None
+    ) -> None:
+        """Initialize the model on the requested execution device, scale factor, and thread configuration.
 
         Parameters
         ----------
@@ -70,6 +75,8 @@ class BaseSRAdapter(ABC):
             Target execution device: 'cpu' or 'cuda'.
         scale : int
             Upscaling factor (must be in scale_factors).
+        num_threads : Optional[int]
+            Intra-op parallelism setting. If None, default backend settings are used.
         """
         pass
 

@@ -67,7 +67,12 @@ class FSRCNNInt8Adapter(BaseSRAdapter):
             return f"INT8 ONNX model weights not found at: {weights_path}. Please run 'python benchmark/quantize_tinysr.py'."
         return None
 
-    def initialize(self, device: str, scale: int) -> None:
+    def initialize(
+        self,
+        device: str,
+        scale: int,
+        num_threads: Optional[int] = None
+    ) -> None:
         if not self.is_available():
             raise RuntimeError(
                 f"[{self.model_id}] Backend is unavailable: {self.get_unavailable_reason()}"
@@ -78,6 +83,8 @@ class FSRCNNInt8Adapter(BaseSRAdapter):
             raise ValueError(f"[{self.model_id}] ONNX INT8 quantized session only supports execution on device='cpu'")
         if scale != 2:
             raise ValueError(f"[{self.model_id}] INT8 FSRCNN only supports scale=2 currently.")
+        if num_threads is not None and num_threads < 1:
+            raise ValueError(f"[{self.model_id}] num_threads must be >= 1, got {num_threads}")
 
         # Deferred import to prevent ModuleNotFoundError when package is missing
         from src.modules.backends import fsrcnn_backend_int8
@@ -85,8 +92,22 @@ class FSRCNNInt8Adapter(BaseSRAdapter):
 
         self._device = device
         self._scale = scale
-        # Force session initialization
-        self._backend_module.load_model(device, scale=scale)
+        self._num_threads = num_threads
+
+        # Construct and cache customized ONNX Session to apply num_threads settings
+        weights_path = os.path.join("models/tinysr", f"fsrcnn_x{scale}_int8.onnx")
+        providers = ["CPUExecutionProvider"]
+        
+        opts = ort.SessionOptions()
+        if num_threads is not None:
+            opts.intra_op_num_threads = num_threads
+        else:
+            import multiprocessing
+            opts.intra_op_num_threads = max(1, multiprocessing.cpu_count() // 2)
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        
+        session = ort.InferenceSession(weights_path, opts, providers=providers)
+        self._backend_module._session_cache[scale] = session
         self._initialized = True
 
     def _run_inference(self, frames: List[np.ndarray]) -> List[np.ndarray]:

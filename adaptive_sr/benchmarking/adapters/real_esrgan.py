@@ -71,7 +71,12 @@ class RealESRGANAdapter(BaseSRAdapter):
             return "basicsr / realesrgan packages are not installed or are incompatible."
         return None
 
-    def initialize(self, device: str, scale: int) -> None:
+    def initialize(
+        self,
+        device: str,
+        scale: int,
+        num_threads: Optional[int] = None
+    ) -> None:
         if not self.is_available():
             raise RuntimeError(
                 f"[{self.model_id}] Backend is unavailable: {self.get_unavailable_reason()}"
@@ -86,12 +91,23 @@ class RealESRGANAdapter(BaseSRAdapter):
         if device == "cuda" and not torch.cuda.is_available():
             raise ValueError(f"[{self.model_id}] CUDA requested but not supported/available in this environment.")
 
+        if num_threads is not None:
+            if device != "cpu":
+                raise ValueError(
+                    f"[{self.model_id}] Custom thread configuration is only supported "
+                    f"on device='cpu', got device='{device}'"
+                )
+            if num_threads < 1:
+                raise ValueError(f"[{self.model_id}] num_threads must be >= 1, got {num_threads}")
+            torch.set_num_threads(num_threads)
+
         # Deferred import to prevent ModuleNotFoundError when package is missing
         from src.modules.backends import realesrgan_backend
         self._backend_module = realesrgan_backend
 
         self._device = device
         self._scale = scale
+        self._num_threads = num_threads
         # Force model load/weight download internally
         self._backend_module.load_model(device, scale=scale)
         self._initialized = True
@@ -104,6 +120,16 @@ class RealESRGANAdapter(BaseSRAdapter):
         for frame in frames:
             # We call backend infer with BGR frame
             out = self._backend_module.infer(frame, self._device, scale=self._scale)
+            
+            # Crop the reconstructed output to the exact expected upscaled dimensions
+            h_in, w_in, _ = frame.shape
+            expected_h = h_in * self._scale
+            expected_w = w_in * self._scale
+            
+            h_out, w_out, _ = out.shape
+            if h_out != expected_h or w_out != expected_w:
+                out = out[:expected_h, :expected_w, :]
+                
             enhanced_frames.append(out)
         return enhanced_frames
 

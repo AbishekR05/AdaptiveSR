@@ -51,7 +51,12 @@ class FSRCNNAdapter(BaseSRAdapter):
     def get_unavailable_reason(self) -> Optional[str]:
         return None
 
-    def initialize(self, device: str, scale: int) -> None:
+    def initialize(
+        self,
+        device: str,
+        scale: int,
+        num_threads: Optional[int] = None
+    ) -> None:
         if device not in ["cpu", "cuda"]:
             raise ValueError(f"[{self.model_id}] Unsupported device: {device}")
         if scale not in self.scale_factors:
@@ -61,8 +66,19 @@ class FSRCNNAdapter(BaseSRAdapter):
         if device == "cuda" and not torch.cuda.is_available():
             raise ValueError(f"[{self.model_id}] CUDA requested but not supported/available in this environment.")
 
+        if num_threads is not None:
+            if device != "cpu":
+                raise ValueError(
+                    f"[{self.model_id}] Custom thread configuration is only supported "
+                    f"on device='cpu', got device='{device}'"
+                )
+            if num_threads < 1:
+                raise ValueError(f"[{self.model_id}] num_threads must be >= 1, got {num_threads}")
+            torch.set_num_threads(num_threads)
+
         self._device = device
         self._scale = scale
+        self._num_threads = num_threads
         # Force model load/weight download internally
         load_model(device, scale=scale)
         self._initialized = True

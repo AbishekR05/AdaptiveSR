@@ -64,13 +64,24 @@ class MockSpatialAdapter(BaseSRAdapter):
     def get_unavailable_reason(self) -> Optional[str]:
         return None
 
-    def initialize(self, device: str, scale: int) -> None:
+    def initialize(
+        self,
+        device: str,
+        scale: int,
+        num_threads: Optional[int] = None
+    ) -> None:
         if device not in ["cpu", "cuda"]:
             raise ValueError("Unsupported device")
         if scale not in self.scale_factors:
             raise ValueError("Unsupported scale factor")
+        if num_threads is not None:
+            if device != "cpu":
+                raise ValueError("Custom thread configuration is only supported on CPU")
+            if num_threads < 1:
+                raise ValueError("num_threads must be >= 1")
         self._device = device
         self._scale = scale
+        self._num_threads = num_threads
         self._initialized = True
 
     def _run_inference(self, frames: List[np.ndarray]) -> List[np.ndarray]:
@@ -131,9 +142,15 @@ class MockTemporalAdapter(BaseSRAdapter):
     def get_unavailable_reason(self) -> Optional[str]:
         return None
 
-    def initialize(self, device: str, scale: int) -> None:
+    def initialize(
+        self,
+        device: str,
+        scale: int,
+        num_threads: Optional[int] = None
+    ) -> None:
         self._device = device
         self._scale = scale
+        self._num_threads = num_threads
         self._initialized = True
 
     def _run_inference(self, frames: List[np.ndarray]) -> List[np.ndarray]:
@@ -386,6 +403,61 @@ def test_smoke_integration_with_step5_1_dataset():
     assert upscaled.shape == (h_in * 2, w_in * 2, 3)
     assert upscaled.dtype == np.uint8
     print(f"\n[smoke_integration] Scaled {w_in}x{h_in} frame to {upscaled.shape[1]}x{upscaled.shape[0]} using tinysr.")
+
+
+# ---------------------------------------------------------------------------
+# 6. Step 5.2 Corrections — CPU Thread Control, Crop verification, and x2 Behavior
+# ---------------------------------------------------------------------------
+
+def test_num_threads_cpu_configuration():
+    """Verifies that num_threads parameter is accepted on CPU, and invalid configurations raise errors."""
+    # FSRCNN FP32 CPU accepts num_threads
+    fsrcnn = get_adapter("tinysr")
+    fsrcnn.initialize(device="cpu", scale=2, num_threads=2)
+    assert fsrcnn._num_threads == 2
+
+    # FSRCNN FP32 CPU num_threads=None preserves default
+    fsrcnn.initialize(device="cpu", scale=2, num_threads=None)
+    assert fsrcnn._num_threads is None
+
+    # FSRCNN FP32 on CUDA raises ValueError when configuring threads
+    import torch
+    if torch.cuda.is_available():
+        with pytest.raises(ValueError, match="only supported on device='cpu'"):
+            fsrcnn.initialize(device="cuda", scale=2, num_threads=4)
+
+    # Invalid num_threads (< 1) raises ValueError
+    with pytest.raises(ValueError, match="num_threads must be >= 1"):
+        fsrcnn.initialize(device="cpu", scale=2, num_threads=0)
+
+
+def test_realesrgan_output_dimensions_exact_cropped():
+    """Verifies that Real-ESRGAN crops the final reconstructed output to the exact expected upscaled dimensions
+
+    even when using odd resolutions that trigger tiling/padding dimensions changes.
+    """
+    adapter = get_adapter("real_esrgan")
+    if not adapter.is_available():
+        pytest.skip("Real-ESRGAN is not available in the current environment.")
+
+    adapter.initialize(device="cpu", scale=2)
+
+    # Use odd dimensions likely to trigger tiling/modulo/padding behavior
+    odd_frame = np.zeros((123, 125, 3), dtype=np.uint8)
+    out = adapter.process(odd_frame, scale=2)
+
+    assert out.shape == (246, 250, 3)
+    assert out.dtype == np.uint8
+
+
+def test_realesrgan_scale2_native_inference_path():
+    """Verifies Real-ESRGAN x2 is configured as native model inference in the system registry."""
+    adapter = get_adapter("real_esrgan")
+    assert 2 in adapter.scale_factors
+    
+    metadata = adapter.get_metadata()
+    assert 2 in metadata["scale_factors"]
+    assert "realesrgan" in metadata["backend"]
 
 
 # Helper import json safely inside tests if not already loaded

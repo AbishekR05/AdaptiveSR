@@ -237,19 +237,33 @@ All models implement the Abstract Base Class `BaseSRAdapter` which encapsulates:
 
 ---
 
-### 5. Device Selection
-The execution device can be dynamically configured via `initialize(device="cpu" | "cuda", scale)`.
-- If `"cuda"` is requested but CUDA is unavailable (e.g. on a CPU-only environment), a clear `ValueError` is thrown.
-- No silent fallback is allowed. This ensures subsequent benchmarking stages measure CPU vs. GPU performance cleanly and accurately.
+### 5. Device & CPU Thread Configuration
+- **Device Selection**: Configured via `initialize(device="cpu" | "cuda", scale, num_threads)`. Requesting CUDA when unavailable raises a clear `ValueError`.
+- **CPU Thread/Core Control**: The `initialize` signature supports `num_threads=None` (uses default backend settings) or `num_threads=N` (requests controlled CPU parallelism).
+  - *PyTorch backends* (`tinysr`, `real_esrgan`): Invoke `torch.set_num_threads(N)` when executing on CPU.
+  - *ONNX Runtime backend* (`tinysr_int8`): Sets `intra_op_num_threads` via `ort.SessionOptions` and dynamically registers the session.
+  - *Unsupported device configuration*: Requesting `num_threads` with `device="cuda"` raises a `ValueError` to ensure thread count constraints are explicitly honored.
+  - *Deferred details*: CPU core affinity binding and active process monitoring are deferred to Step 5.3.
 
 ---
 
-### 6. Preprocessing / Postprocessing
-All model-specific preprocessing (layout conversion to BCHW, float normalization, RGB conversion) and postprocessing (clipping, layout conversion back to HWC, uint8 scaling, BGR conversion) are contained **inside** the adapter. The caller interacts solely with raw uint8 BGR frames.
+### 6. Preprocessing / Postprocessing & Output Cropping
+- Preprocessing and postprocessing steps are isolated inside the adapter, keeping raw BGR frames as the clean input/output boundary.
+- **Real-ESRGAN Output Cropping**: Real-ESRGAN's upsampler can introduce padding or border mismatches when dividing frames into tiles. To protect the strict output validation contract, `RealESRGANAdapter` crops the output frame to the exact dimensions ($H_{out} = H_{in} \times S$, $W_{out} = W_{in} \times S$) before returning it. Generic caller-side resizing is completely avoided.
 
 ---
 
-### 7. Registry Integration & Discovery
+### 7. Real-ESRGAN x2 Compute Path Finding
+- **Native vs. Downsampled**: Real-ESRGAN scale=2 operates on a **genuine native x2 compute path**.
+- **Evidence**:
+  - The model weights are loaded from `RealESRGAN_x2plus.pth`.
+  - The underlying generator architecture `RRDBNet` is initialized with `scale=2` parameters.
+  - The upsampler wrapper `RealESRGANer` runs with `scale=2`.
+- Since the model construction and inference scale match the target output scale factor, no post-inference downsampling is used.
+
+---
+
+### 8. Registry Integration & Discovery
 The registry interface (`adaptive_sr/benchmarking/adapters/registry.py`) links registered model IDs to their adapter wrappers. 
 Exposed endpoints:
 - `get_adapter(model_id: str) -> BaseSRAdapter`
@@ -258,11 +272,14 @@ Exposed endpoints:
 
 ---
 
-### 8. Verification & Test Suite
+### 9. Verification & Test Suite
 Unit tests in [`tests/test_model_adapters.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_model_adapters.py) cover:
 - Standard execution flow, input type check, and shape checks.
 - Spatial sequence handling vs. temporal sequence requirements.
 - Target upscaled dimension validation and silent upscaling prevention.
 - Registry mapping and dynamic capability status checks.
 - CPU/GPU device validation and uninitialized process errors.
+- **CPU Thread Control verification**: Tests that `initialize` accepts `num_threads`, `num_threads=None` preserves default execution, and unsupported non-CPU thread settings fail explicitly.
+- **Odd Resolution Cropping verification**: Feeds a non-standard odd resolution frame (`123 x 125`) to the `RealESRGANAdapter` to verify that the internal tiling/padding doesn't cause shape mismatch errors and crops correctly.
+- **Real-ESRGAN scale=2 verification**: Confirms that scale=2 is supported by the adapter metadata.
 - **Step 5.1 Dataset Smoke Test**: Integration test that loads a real chunk file from the Step 5.1 benchmark manifest, extracts a frame, processes it through the FSRCNN adapter on CPU, and verifies output dimensions match the expected scale factor.

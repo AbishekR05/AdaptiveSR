@@ -51,7 +51,12 @@ class BasicVSRppAdapter(BaseSRAdapter):
             "mismatches on Windows development machines."
         )
 
-    def initialize(self, device: str, scale: int) -> None:
+    def initialize(
+        self,
+        device: str,
+        scale: int,
+        num_threads: Optional[int] = None
+    ) -> None:
         raise NotImplementedError(
             f"[{self.model_id}] MMCV backend is unavailable: {self.get_unavailable_reason()}"
         )
