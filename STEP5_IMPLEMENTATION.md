@@ -283,3 +283,75 @@ Unit tests in [`tests/test_model_adapters.py`](file:///d:/Full%20Stack/AdaptiveS
 - **Odd Resolution Cropping verification**: Feeds a non-standard odd resolution frame (`123 x 125`) to the `RealESRGANAdapter` to verify that the internal tiling/padding doesn't cause shape mismatch errors and crops correctly.
 - **Real-ESRGAN scale=2 verification**: Confirms that scale=2 is supported by the adapter metadata.
 - **Step 5.1 Dataset Smoke Test**: Integration test that loads a real chunk file from the Step 5.1 benchmark manifest, extracts a frame, processes it through the FSRCNN adapter on CPU, and verifies output dimensions match the expected scale factor.
+
+---
+---
+
+## Step 5.3 — CPU Affinity + ProcessMonitor Integration
+
+### 1. Purpose & Objectives
+Step 5.3 establishes a controlled, reproducible execution environment for CPU benchmarking experiments by restricting the SR inference process to a known set of logical CPU cores while monitoring its resource consumption via process-level telemetry.
+
+> [!IMPORTANT]
+> **Step 5.3 provides benchmarking instrumentation and execution control. It does NOT make dynamic resource allocation or runtime placement scheduling decisions.**
+
+---
+
+### 2. CPU Affinity vs. num_threads Distinction
+To support empirical experiments mapping latency to CPU resources, Step 5.3 separates hardware core bounds from backend thread counts:
+- **Logical CPU Affinity**: The operating system scheduler constraint restricting the process to a specific set of logical core indices.
+- **Model thread count (`num_threads`)**: The size of the intra-op compute thread pool initialized by PyTorch or ONNX Runtime.
+- **Oversubscription Control**: Restricting a process to $M$ logical cores while requesting $N$ threads ($N > M$) allows testing the effects of thread oversubscription under controlled hardware constraints.
+
+---
+
+### 3. Logical CPU Discovery & Selection
+- **Discovery**: Exposes `get_available_cpus() -> List[int]` which dynamically fetches logical indices (e.g. `[0, 1, 2, ..., 11]`) via `psutil`.
+- **Deterministic Selection**: Exposes `select_cpu_ids(count: int) -> List[int]`. To ensure reproducibility across runs, the selected core list is fully deterministic (e.g., requesting 4 logical cores on a 12-core host consistently returns `[0, 1, 2, 3]`).
+
+---
+
+### 4. Validation Rules
+The configuration model `CPUExecutionConfig` enforces strict validation checks to prevent invalid hardware binds:
+- Rejects negative CPU IDs.
+- Rejects duplicate CPU ID entries (e.g. `[0, 0]`).
+- Rejects empty CPU ID sets.
+- Rejects CPU counts or IDs exceeding available host limits (prevents silent core clamping).
+- Rejects `num_threads <= 0`.
+
+---
+
+### 5. Guarantees for CPU Affinity Restoration
+To prevent the Python runner or development environment from remaining permanently core-bound after a test exits or encounters a failure:
+- The context manager `cpu_affinity_context` captures the process's initial affinity mask on enter.
+- It applies the restricted mask for the duration of the context.
+- Under a `finally` block, it guarantees restoration of the original affinity mask, even if exceptions, test assertions, or model runtime crashes occur inside.
+
+---
+
+### 6. ProcessMonitor Integration & Observability Lifecycle
+Step 5.3 integrates the frozen Step 4 `ProcessMonitor` via a background thread wrapper `BenchmarkProcessMonitor`:
+- **Background Sampling**: On `start()`, a daemon thread periodically queries the process state via the frozen `ProcessMonitor.snapshot(interval)` and accumulates `ProcessResourceSnapshot` metrics.
+- **Termination Cleanup**: On `stop()`, the thread is joined and cleaned up to prevent thread leaks.
+- **Lifecycle Coordination**: The `benchmark_execution_context` manager coordinates the complete start-stop lifecycle:
+  1. Starts the background process monitor.
+  2. Sets the CPU affinity core restriction.
+  3. Yields for benchmark workload execution.
+  4. Restores the original CPU affinity mask.
+  5. Stops the background process monitor thread.
+
+---
+
+### 7. Portability & OS Support
+- **Windows (Current Host)**: Uses `psutil.Process().cpu_affinity(...)` to configure core masks.
+- **Linux/Azure (Eventual Deployment)**: The `psutil` affinity interface is fully portable across Windows and Linux, ensuring that the same code and tests will execute on Linux edge instances without modification.
+
+---
+
+### 8. Automated Tests
+Tests in [`tests/test_cpu_control.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_cpu_control.py) cover all 19 functional requirements, verifying:
+- CPU discovery, validation, and error boundaries.
+- Thread configuration setting and verification in PyTorch and ONNX Runtime backends.
+- Safety guarantees (affinity restoration on success and exceptions).
+- ProcessMonitor background lifecycle execution, sample accumulation, and thread leak protection.
+- Downstream model adapter smoke test compatibility.

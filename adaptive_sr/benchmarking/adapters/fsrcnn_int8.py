@@ -95,6 +95,7 @@ class FSRCNNInt8Adapter(BaseSRAdapter):
         self._num_threads = num_threads
 
         # Construct and cache customized ONNX Session to apply num_threads settings
+        import onnxruntime as ort
         weights_path = os.path.join("models/tinysr", f"fsrcnn_x{scale}_int8.onnx")
         providers = ["CPUExecutionProvider"]
         
