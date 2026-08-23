@@ -2,26 +2,76 @@
 
 ## Step 5.1 — Benchmark Dataset / Test-Video Preparation
 
-### 1. Purpose
+### 1. Purpose & Benchmark Corpus Scope
 This step establishes a deterministic, reproducible benchmark dataset (manifest, videos, chunks, and metadata) to support empirical Super-Resolution (SR) model evaluation. Every model analyzed in later steps will run on the exact same inputs (resolutions, frame counts, FPS, and dynamic content patterns).
 
 > [!IMPORTANT]
 > **Step 5.1 prepares benchmark INPUTS. It does NOT load SR models, define model runner adapters, or run SR inference.**
 
+#### Benchmark Corpus Scope Clarification
+The synthetic corpus generated in this step is intentionally suitable for:
+- Inference latency benchmarking.
+- Throughput / FPS benchmarking.
+- CPU/GPU resource benchmarking.
+- Spatial resolution/scale computational benchmarking.
+- Pipeline correctness testing and verification of edge-to-client/edge-to-cloud interfaces.
+- Target FPS/chunk handling validation.
+
+The synthetic corpus is **NOT** considered sufficient evidence for:
+- Natural-video SR perceptual quality comparison.
+- Production-quality PSNR/SSIM/VMAF conclusions.
+- Content-aware SR quality decisions.
+
+Therefore, **Step 5.6 quality evaluation MUST use suitable real-world reference video clips** (natural video with full-reference frames) when making claims about SR quality.
+
 ---
 
-### 2. Benchmark Corpus Design
+### 2. Benchmark Corpus Layers
+To support independent analysis of resources, performance, and video quality, the benchmark corpus is divided into three distinct layers:
+
+| Layer | Title | Purpose | Status in Step 5.1 |
+|-------|-------|---------|--------------------|
+| **Layer A** | Controlled Synthetic Corpus | Latency, throughput, resource, and pipeline correctness testing under controlled conditions. | **Fully Implemented** |
+| **Layer B** | Real-World Reference Corpus | Quantitative and qualitative SR quality evaluation (PSNR/SSIM/VMAF) in Step 5.6. | Deferred to Step 5.6 (to be introduced when quality comparisons are performed) |
+| **Layer C** | Production-Like Streaming Inputs | End-to-end validation against the actual production streaming representation pipeline. | Deferred to end-to-end integration |
+
+No quality metrics, model runners, or Layer B/C video files are introduced in Step 5.1.
+
+---
+
+### 3. Real-World Quality Dataset Policy
+- The initial Step 5.1 synthetic corpus serves exclusively as the controlled latency/resource benchmark corpus (Layer A).
+- A separate real-world reference corpus (Layer B) containing natural video with reference frames suitable for full-reference quality evaluation will be introduced for Step 5.6 when perceptual/quality comparisons are performed. 
+- No quality evaluation or external real-world downloads are performed at this stage.
+
+---
+
+### 4. Step 1 Feature-Diversity Warning
+- The synthetic corpus is **not** intended to provide a representative distribution of real-world content-complexity features.
+- While it may be used to verify that the Step 1 profiler runs correctly on controlled inputs, it **must NOT** be treated as the sole dataset for learning or validating content-aware scheduling relationships later in Step 10.
+
+---
+
+### 5. Codec Methodology & Mismatch Analysis
+- **Production/Reference Codec**: The production streaming pipeline (e.g., in `VideoEncoder` under `src/modules/encoder.py`) encodes raw frames using FFmpeg's `libx264` to generate **H.264** video streams.
+- **Synthetic Benchmark Codec**: The Step 5.1 synthetic corpus generator utilizes OpenCV's `cv2.VideoWriter` with the `mp4v` codec (**MPEG-4**) to guarantee a highly portable, cross-platform, and deterministic generation path on the development machine.
+- **Codec Mismatch**: **Yes**.
+- **Methodology Impact**: Because of this mismatch, Step 5.1 benchmark timings that include decode/container processing **must NOT** be interpreted as production H.264 decode timings. They represent Layer A comparative processing overhead only.
+
+---
+
+### 6. Benchmark Corpus Design
 The benchmark corpus is designed to cover:
 - **Frame Rates**: 30 FPS, 60 FPS, and 120 FPS.
 - **Content Diversity**: Exercises three distinct motion profiles:
   - `lowmotion`: Moves dynamic targets at 20 pixels/second.
   - `moderatemotion`: Moves dynamic targets at 100 pixels/second.
   - `highmotion`: Moves dynamic targets at 300 pixels/second.
-- **Duration**: Configured to exactly 4.0 seconds by default. Under a target chunk duration of 2.0 seconds, this guarantees exactly 2 chunks per video, allowing fast unit test execution while retaining multi-chunk behavior.
+- **Duration**: Configured to exactly 4.0 seconds by default. Under a target chunk duration of 2.0 seconds, this guarantees exactly 2 chunks per video, allowing fast unit test execution while retaining multiple-chunk behavior.
 
 ---
 
-### 3. Synthetic Video Generation
+### 7. Synthetic Video Generation
 Videos are deterministically generated frame-by-frame using OpenCV (`cv2.VideoWriter`) with the `mp4v` codec.
 The frames contain:
 - A dark blue-gray background with a high-contrast grid pattern (high spatial frequencies).
@@ -30,12 +80,7 @@ The frames contain:
 
 ---
 
-### 4. Real-World Video Policy
-If a real-world test clip is already present in the repository, it is registered. Currently, the initial benchmark dataset relies on the synthetic corpus to ensure perfect pixel-level reproducibility and speed. The prepare script accepts any input video, meaning real-world videos can be added and profiled without any code redesign.
-
----
-
-### 5. Source Metadata
+### 8. Source Metadata
 For every benchmark video, the following metadata is verified and recorded:
 - `benchmark_video_id`
 - `filename`
@@ -51,7 +96,7 @@ For every benchmark video, the following metadata is verified and recorded:
 
 ---
 
-### 6. Chunk Association Mechanism
+### 9. Chunk Association Mechanism
 Step 5.1 reuses the Step 1 profiling pipeline (`run_profiler` from `profile_video.py`) to segment the generated video into dynamic chunks and profile its content complexity.
 The chunks are associated by reading the profiler's output artifacts (`{video_id}_profile.json` and `{video_id}_manifest.json`). We merge:
 - The chunk timeline ranges (`start_frame`, `end_frame`, `start_time_seconds`, etc.)
@@ -61,12 +106,12 @@ This ensures we consume the authoritative Step 1 timeline without duplicate comp
 
 ---
 
-### 7. Dataset Hashing & Integrity
+### 10. Dataset Hashing & Integrity
 For every generated source video and chunk, a stable SHA-256 cryptographic hash is calculated. Files are checked against these hashes during validation to catch files modified or corrupted in transport. Timestamps and file modification times are not used for identity, ensuring absolute reproducibility across machines.
 
 ---
 
-### 8. Directory Structure
+### 11. Directory Structure
 All benchmark files are located inside `data/benchmarks/sr/` to keep them cleanly separated from runtime Edge caches and network emulation logs:
 ```
 data/
@@ -80,7 +125,7 @@ data/
 
 ---
 
-### 9. CLI Usage
+### 12. CLI Usage
 
 To generate or overwrite the benchmark dataset:
 ```powershell
@@ -97,7 +142,7 @@ python -m adaptive_sr.benchmarking.prepare_dataset --output data/benchmarks/sr/ 
 
 ---
 
-### 10. Validation Mechanism
+### 13. Validation Mechanism
 A dataset validation routine is exposed via:
 ```powershell
 python -m adaptive_sr.benchmarking.prepare_dataset --validate data/benchmarks/sr/manifests/benchmark_manifest.json
@@ -113,11 +158,11 @@ The validator checks:
 
 ---
 
-### 11. Automated Tests
+### 14. Automated Tests
 Unit tests in [`tests/test_benchmark_preparation.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_benchmark_preparation.py) cover all 16 specified requirements (FPS detection, hash checks, chunk continuity, duplicate prevention, and tamper detection).
 
 ---
 
-### 12. Limitations
+### 15. Limitations
 - **OpenCV VideoWriter Container timing**: On some operating systems, VideoWriter might introduce tiny floating-point rounding differences in duration. The validator handles this using a small floating-point tolerance check.
 - **FFmpeg copy-segmentation boundaries**: Since synthetic videos have keyframes at every frame (by default in raw mpeg4), the chunks segment exactly at the requested 2.0s boundary.
