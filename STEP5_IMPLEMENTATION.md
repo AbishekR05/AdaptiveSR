@@ -166,3 +166,103 @@ Unit tests in [`tests/test_benchmark_preparation.py`](file:///d:/Full%20Stack/Ad
 ### 15. Limitations
 - **OpenCV VideoWriter Container timing**: On some operating systems, VideoWriter might introduce tiny floating-point rounding differences in duration. The validator handles this using a small floating-point tolerance check.
 - **FFmpeg copy-segmentation boundaries**: Since synthetic videos have keyframes at every frame (by default in raw mpeg4), the chunks segment exactly at the requested 2.0s boundary.
+
+---
+---
+
+## Step 5.2 — SR Model Runner Adapter Interface
+
+### 1. Purpose & Core Abstraction
+Step 5.2 establishes a common, model-independent adapter interface (`BaseSRAdapter`) that decouples model-specific initialization, execution, and verification pipelines from the future benchmarking harness. 
+
+> [!IMPORTANT]
+> **Step 5.2 provides model execution abstraction. It does NOT benchmark models.**
+> Timing statistics, ProcessMonitor resource checks, and GPU profiling belong strictly to later Steps 5.3–5.5.
+
+---
+
+### 2. The Base Adapter Contract
+All models implement the Abstract Base Class `BaseSRAdapter` which encapsulates:
+- **Initialization** (`initialize(device, scale)`): Wakes up the target model backend on the specified hardware target and scale.
+- **Inference Execution** (`process(inputs, scale)`): Performs the backend-specific runtime forward pass.
+- **Cleanup** (`close()`): Releases backend sessions or clears GPU VRAM caches.
+- **Capability Discovery**: Exposes whether the model can execute in the current environment (`is_available() -> bool`) and documents the dependency blocks if not (`get_unavailable_reason() -> Optional[str]`).
+
+---
+
+### 3. Spatial vs. Temporal Input/Output Contracts
+
+#### Input Validation Contract
+- **Spatial models** (e.g. FSRCNN, Real-ESRGAN): Accept either a single frame (`np.ndarray` of shape `(H, W, 3)`) or a list of frames to process independently.
+- **Temporal models** (e.g. BasicVSR++): Must accept a list of frames representing a temporal sequence. Passing a single frame to a temporal adapter raises a `ValueError`.
+- Validation checks confirm that:
+  - Input objects are standard `uint8` numpy arrays with 3 color channels (BGR).
+  - All frames inside a sequence list share identical spatial dimensions.
+
+#### Output Validation Contract
+- The output structure mirrors the input structure (a single array or a list of arrays).
+- Every output frame must satisfy the strict scale factor equation:
+  $$\text{output\_height} = \text{input\_height} \times \text{scale}$$
+  $$\text{output\_width} = \text{input\_width} \times \text{scale}$$
+- **No silent resizing is permitted**: If the backend produces an unexpected dimension mismatch, a validation `ValueError` is raised, preventing silent inference bugs.
+
+---
+
+### 4. Registered Adapters
+
+#### 1. FSRCNN FP32 (`tinysr`)
+- **Backend**: PyTorch (`pytorch`).
+- **Precision**: `fp32`.
+- **Supported Scales**: `[2, 3, 4]`.
+- **Availability**: Always `True` (PyTorch is a core package requirement).
+
+#### 2. FSRCNN INT8 (`tinysr_int8`)
+- **Backend**: ONNX Runtime (`onnxruntime`).
+- **Precision**: `int8`.
+- **Supported Scales**: `[2]`.
+- **Availability**: Dynamic. Requires `onnxruntime` importable and the weights file `models/tinysr/fsrcnn_x2_int8.onnx` to exist. 
+
+#### 3. Real-ESRGAN (`real_esrgan`)
+- **Backend**: RealESRGAN (`realesrgan` upsampler using PyTorch RRDBNet).
+- **Precision**: `fp32`.
+- **Supported Scales**: `[2, 4]`.
+- **Availability**: Requires `basicsr` and `realesrgan` importable. Exposes a pre-import compatibility patch for `torchvision.transforms.functional_tensor` to resolve torchvision deprecations on Python 3.10+.
+
+#### 4. BasicVSR++ (`basicvsr++`)
+- **Backend**: BasicVSR (`basicvsr_backend`).
+- **Precision**: `fp32`.
+- **Supported Scales**: `[4]`.
+- **Temporal/Spatial**: `temporal` (sequence-aware).
+- **Availability**: Always `False` (MMCV compilation is blocked on Windows; operates as a capability discovery stub with the reason documented).
+
+---
+
+### 5. Device Selection
+The execution device can be dynamically configured via `initialize(device="cpu" | "cuda", scale)`.
+- If `"cuda"` is requested but CUDA is unavailable (e.g. on a CPU-only environment), a clear `ValueError` is thrown.
+- No silent fallback is allowed. This ensures subsequent benchmarking stages measure CPU vs. GPU performance cleanly and accurately.
+
+---
+
+### 6. Preprocessing / Postprocessing
+All model-specific preprocessing (layout conversion to BCHW, float normalization, RGB conversion) and postprocessing (clipping, layout conversion back to HWC, uint8 scaling, BGR conversion) are contained **inside** the adapter. The caller interacts solely with raw uint8 BGR frames.
+
+---
+
+### 7. Registry Integration & Discovery
+The registry interface (`adaptive_sr/benchmarking/adapters/registry.py`) links registered model IDs to their adapter wrappers. 
+Exposed endpoints:
+- `get_adapter(model_id: str) -> BaseSRAdapter`
+- `list_available_models() -> List[str]` (Filters out unavailable stubs dynamically).
+- `get_model_status_report() -> Dict[str, Dict[str, Any]]` (Returns registration and availability details for all models).
+
+---
+
+### 8. Verification & Test Suite
+Unit tests in [`tests/test_model_adapters.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_model_adapters.py) cover:
+- Standard execution flow, input type check, and shape checks.
+- Spatial sequence handling vs. temporal sequence requirements.
+- Target upscaled dimension validation and silent upscaling prevention.
+- Registry mapping and dynamic capability status checks.
+- CPU/GPU device validation and uninitialized process errors.
+- **Step 5.1 Dataset Smoke Test**: Integration test that loads a real chunk file from the Step 5.1 benchmark manifest, extracts a frame, processes it through the FSRCNN adapter on CPU, and verifies output dimensions match the expected scale factor.
