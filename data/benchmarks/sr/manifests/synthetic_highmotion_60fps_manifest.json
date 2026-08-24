@@ -2,18 +2,18 @@
     "schema_version": "1.0.0",
     "video_id": "synthetic_highmotion_60fps",
     "source_file_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\videos\\synthetic_highmotion_60fps.mp4",
-    "source_file_hash": "06decd7c3d0bebb1825423e7fac3958c8a1e26cf50088b6e95935d4d8345e2e5",
+    "source_file_hash": "109b16a2a983657b042cf125e7b37b5aac275213f064a78e265b8b6fa7b36fc0",
     "generated_profile_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\profiles\\synthetic_highmotion_60fps_profile.json",
     "chunks": [
         {
             "chunk_id": "0000",
             "file_path": "chunks\\synthetic_highmotion_60fps_0000.mp4",
-            "file_hash": "36b5fb9d6e687e0a50f6debc64e3f87967f4f2a22c84ab0ed0adf07537de451d"
+            "file_hash": "f48111a699c57e3cd4323a49a27f96e0255b948ac75198a6318733d24906bb44"
         },
         {
             "chunk_id": "0001",
             "file_path": "chunks\\synthetic_highmotion_60fps_0001.mp4",
-            "file_hash": "8fe28b8ae55c7b354bd47044c891643ae267c24885f36f49965757e987b780d0"
+            "file_hash": "f1adc89aaa93bfcc96aac4891e77a9d20adb596f51682443e9a8b200ebb1a18b"
         }
     ]
 }

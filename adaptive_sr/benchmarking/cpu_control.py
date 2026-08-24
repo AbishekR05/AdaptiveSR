@@ -69,16 +69,18 @@ def restore_affinity(previous_affinity: List[int]) -> None:
     psutil.Process().cpu_affinity(previous_affinity)
 
 
-def select_cpu_ids(count: int) -> List[int]:
-    """Deterministically selects a subset of available logical CPU IDs.
+def select_cpu_ids(count: int, exclude_cpu_ids: Optional[List[int]] = None) -> List[int]:
+    """Deterministically selects a subset of available logical CPU IDs, optionally excluding some.
 
-    For example, if host has [0, 1, 2, 3, 4], calling with count=2
-    returns [0, 1].
+    For example, if host has [0, 1, 2, 3, 4], calling with count=2 and exclude_cpu_ids=[0]
+    returns [1, 2].
 
     Parameters
     ----------
     count : int
         The number of logical CPU cores to request.
+    exclude_cpu_ids : Optional[List[int]]
+        CPU ID list to exclude from selection.
 
     Returns
     -------
@@ -86,11 +88,14 @@ def select_cpu_ids(count: int) -> List[int]:
         List containing exactly `count` logical CPU core IDs.
     """
     available = get_available_cpus()
+    if exclude_cpu_ids:
+        available = [c for c in available if c not in exclude_cpu_ids]
+
     if count <= 0:
         raise ValueError("Requested CPU count must be greater than 0.")
     if count > len(available):
         raise ValueError(
-            f"Requested CPU count {count} exceeds available CPUs on this host ({len(available)})."
+            f"Requested CPU count {count} exceeds available CPUs on this host ({len(available)}) after exclusions."
         )
     return available[:count]
 
@@ -107,6 +112,7 @@ class CPUExecutionConfig:
     """
     cpu_ids: List[int]
     num_threads: Optional[int] = None
+    exclude_cpu_ids: Optional[List[int]] = None
 
     def __post_init__(self) -> None:
         # Validation rules (Step 5.3 §19)
@@ -114,6 +120,7 @@ class CPUExecutionConfig:
             raise ValueError("CPU IDs set cannot be empty.")
 
         available = get_available_cpus()
+        excluded = set(self.exclude_cpu_ids) if self.exclude_cpu_ids else set()
         seen = set()
         for cid in self.cpu_ids:
             if cid < 0:
@@ -121,6 +128,8 @@ class CPUExecutionConfig:
             if cid in seen:
                 raise ValueError(f"Duplicate CPU ID detected in request: {cid}")
             seen.add(cid)
+            if cid in excluded:
+                raise ValueError(f"CPU ID {cid} is in exclude_cpu_ids set, conflict detected.")
             if cid not in available:
                 raise ValueError(
                     f"Requested CPU ID {cid} is not available on this host. "

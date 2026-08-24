@@ -54,6 +54,8 @@ class BenchmarkConfig(BaseModel):
     warmup_runs: int = Field(default=3, ge=0)
     measured_runs: int = Field(default=20, gt=0)
     gpu_sampling_interval: float = Field(default=0.5, gt=0.0)
+    is_decision_run: bool = False
+    cpu_0_intentional: bool = False
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -69,6 +71,15 @@ class BenchmarkConfig(BaseModel):
         if dev_lower == "cpu":
             if self.cpu_config is None:
                 raise ValueError("cpu_config must be provided when device='cpu'")
+            
+            if self.is_decision_run and not self.cpu_0_intentional:
+                excl = self.cpu_config.exclude_cpu_ids or []
+                if 0 not in excl:
+                    raise ValueError(
+                        "BenchmarkConfig declared as is_decision_run on CPU must explicitly "
+                        "exclude CPU 0 (exclude_cpu_ids must contain 0) to minimize noise, "
+                        "unless cpu_0_intentional is set to True."
+                    )
         else:
             if self.cpu_config is not None:
                 raise ValueError("cpu_config must be None when device is CUDA")
@@ -100,6 +111,17 @@ class LatencyStatistics(BaseModel):
     std_dev: float
     p95: float
     p95_method: str = "numpy_linear"
+    p95_sample_count: int
+    p95_confidence_note: str
+
+    # Explicit statistical fields required by downstream tools/analysis
+    min_latency: float
+    median_latency: float
+    mean_latency: float
+    max_latency: float
+    std_latency: float
+    p95_latency: float
+    measured_trial_count: int
 
 
 class ResourceSummary(BaseModel):
@@ -130,6 +152,7 @@ class HostMetadata(BaseModel):
     gpu_vram_total_mb: Optional[float] = None
     cuda_version: Optional[str] = None
     driver_version: Optional[str] = None
+    thermal_state: str = "not_measured"
 
 
 class BenchmarkResult(BaseModel):
@@ -141,10 +164,19 @@ class BenchmarkResult(BaseModel):
     latency_statistics: LatencyStatistics
     throughput_fps: float
     resource_summary: ResourceSummary
+    warmup_resource_summary: ResourceSummary
     metadata: Dict[str, Any]
     successful_trials: int
     failed_trials: int
     failures: List[str]
+
+
+class MultiSessionResult(BaseModel):
+    """Encapsulates outcomes of executing a benchmark configuration over multiple independent sessions."""
+    benchmark_id: str
+    config: BenchmarkConfig
+    sessions: List[BenchmarkResult]
+    metadata: Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -260,13 +292,17 @@ class InferenceBenchmarkHarness:
 
         # CPU Exec Path
         if not is_gpu:
-            cpu_monitor = BenchmarkProcessMonitor(sample_interval=0.05)
-            with benchmark_execution_context(config.cpu_config, cpu_monitor):
-                # Warm up runs
+            # Warm up phase
+            warmup_monitor = BenchmarkProcessMonitor(sample_interval=0.05)
+            with benchmark_execution_context(config.cpu_config, warmup_monitor):
                 for _ in range(config.warmup_runs):
                     adapter.process(prepared_input, scale=config.scale)
+            warmup_cpu_samples = warmup_monitor.get_samples()
+            warmup_gpu_samples = []
 
-                # Steady-state trials timing boundary
+            # Measured trials phase
+            measured_monitor = BenchmarkProcessMonitor(sample_interval=0.05)
+            with benchmark_execution_context(config.cpu_config, measured_monitor):
                 for trial_idx in range(config.measured_runs):
                     try:
                         t0 = time.perf_counter()
@@ -286,23 +322,27 @@ class InferenceBenchmarkHarness:
                         failures.append(str(e))
                         trial_records.append(TrialRecord(trial_idx=trial_idx, success=False, error_message=str(e)))
 
-            cpu_samples = cpu_monitor.get_samples()
+            cpu_samples = measured_monitor.get_samples()
             gpu_samples = []
             boundary_snapshots = []
 
         # GPU Exec Path (CUDA synchronization rules)
         else:
-            gpu_monitor = GPUMonitor(device_id=device_id, sample_interval=config.gpu_sampling_interval)
             boundary_snapshots = []
 
-            with gpu_monitor:
-                # Warm up runs
+            # Warm up phase
+            warmup_monitor = GPUMonitor(device_id=device_id, sample_interval=config.gpu_sampling_interval)
+            with warmup_monitor:
                 for _ in range(config.warmup_runs):
                     adapter.process(prepared_input, scale=config.scale)
+            warmup_gpu_samples = warmup_monitor.get_samples()
+            warmup_cpu_samples = []
 
+            # Measured trials phase
+            gpu_monitor = GPUMonitor(device_id=device_id, sample_interval=config.gpu_sampling_interval)
+            with gpu_monitor:
                 torch.cuda.synchronize(device_id)
 
-                # Steady-state trials timing boundary
                 for trial_idx in range(config.measured_runs):
                     torch.cuda.synchronize(device_id)
                     mem_before = take_gpu_snapshot(device_id)
@@ -355,14 +395,32 @@ class InferenceBenchmarkHarness:
         # Compute stats (precision linear interpolation percentile)
         if trial_latencies:
             latencies_arr = np.array(trial_latencies)
+            cnt = len(trial_latencies)
+            conf_note = "Exploratory p95; limited tail resolution at n=20." if cnt <= 20 else "Sufficient tail resolution."
+            mean_val = float(np.mean(latencies_arr))
+            median_val = float(np.median(latencies_arr))
+            min_val = float(np.min(latencies_arr))
+            max_val = float(np.max(latencies_arr))
+            std_val = float(np.std(latencies_arr)) if len(trial_latencies) > 1 else 0.0
+            p95_val = float(np.percentile(latencies_arr, 95))
+            
             stats = LatencyStatistics(
-                count=len(trial_latencies),
-                mean=float(np.mean(latencies_arr)),
-                median=float(np.median(latencies_arr)),
-                min=float(np.min(latencies_arr)),
-                max=float(np.max(latencies_arr)),
-                std_dev=float(np.std(latencies_arr)) if len(trial_latencies) > 1 else 0.0,
-                p95=float(np.percentile(latencies_arr, 95))
+                count=cnt,
+                mean=mean_val,
+                median=median_val,
+                min=min_val,
+                max=max_val,
+                std_dev=std_val,
+                p95=p95_val,
+                p95_sample_count=cnt,
+                p95_confidence_note=conf_note,
+                min_latency=min_val,
+                median_latency=median_val,
+                mean_latency=mean_val,
+                max_latency=max_val,
+                std_latency=std_val,
+                p95_latency=p95_val,
+                measured_trial_count=cnt
             )
             # Sequential FPS calculation
             throughput_fps = 1.0 / stats.mean
@@ -374,18 +432,31 @@ class InferenceBenchmarkHarness:
                 min=0.0,
                 max=0.0,
                 std_dev=0.0,
-                p95=0.0
+                p95=0.0,
+                p95_sample_count=0,
+                p95_confidence_note="No trials executed.",
+                min_latency=0.0,
+                median_latency=0.0,
+                mean_latency=0.0,
+                max_latency=0.0,
+                std_latency=0.0,
+                p95_latency=0.0,
+                measured_trial_count=0
             )
             throughput_fps = 0.0
 
         # Aggregate Resource Snapshot telemetry
         res_summary = self._summarize_resources(cpu_samples, gpu_samples, boundary_snapshots)
+        warmup_summary = self._summarize_resources(warmup_cpu_samples, warmup_gpu_samples, [])
 
         # Build full output record
         benchmark_id = f"bench_{config.model_id}_x{config.scale}_{config.device.replace(':', '_')}_{int(time.time())}"
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
         meta_details = {
+            "session_id": benchmark_id,
+            "timestamp": timestamp,
+            "benchmark_config": config.model_dump(),
             "input_details": {
                 "input_id": config.input_id,
                 "width": input_shape[1],
@@ -402,6 +473,10 @@ class InferenceBenchmarkHarness:
             }
         }
 
+        # Include crop info in metadata if model has it
+        if hasattr(adapter, "get_last_inference_metadata"):
+            meta_details["crop_metadata"] = adapter.get_last_inference_metadata()
+
         return BenchmarkResult(
             benchmark_id=benchmark_id,
             timestamp=timestamp,
@@ -410,10 +485,34 @@ class InferenceBenchmarkHarness:
             latency_statistics=stats,
             throughput_fps=throughput_fps,
             resource_summary=res_summary,
+            warmup_resource_summary=warmup_summary,
             metadata=meta_details,
             successful_trials=successful_trials,
             failed_trials=failed_trials,
             failures=failures,
+        )
+
+    def run_multi_session(self, config: BenchmarkConfig, num_sessions: int = 1) -> MultiSessionResult:
+        """Executes a benchmark config over multiple independent sessions, preserving session isolation."""
+        sessions = []
+        for i in range(num_sessions):
+            result = self.run_benchmark(config)
+            session_id = f"{result.benchmark_id}_session_{i + 1}"
+            result.benchmark_id = session_id
+            result.metadata["session_id"] = session_id
+            sessions.append(result)
+
+        benchmark_id = f"multisession_{config.model_id}_x{config.scale}_{config.device.replace(':', '_')}_{int(time.time())}"
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+        return MultiSessionResult(
+            benchmark_id=benchmark_id,
+            config=config,
+            sessions=sessions,
+            metadata={
+                "num_sessions": num_sessions,
+                "timestamp": timestamp
+            }
         )
 
     def _get_host_metadata(self, is_gpu: bool, device_id: int) -> HostMetadata:
@@ -443,6 +542,7 @@ class InferenceBenchmarkHarness:
             gpu_vram_total_mb=gpu_vram / (1024 * 1024) if gpu_vram is not None else None,
             cuda_version=cuda_version,
             driver_version=driver_version,
+            thermal_state="not_measured"
         )
 
     def _summarize_resources(

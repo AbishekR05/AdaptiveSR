@@ -251,6 +251,20 @@ class BaseSRAdapter(ABC):
             "unavailable_reason": self.get_unavailable_reason()
         }
 
+    def get_last_inference_metadata(self) -> Dict[str, Any]:
+        """Retrieves dynamic metadata regarding the most recent inference execution,
+        such as cropping parameters.
+        """
+        return {
+            "crop_applied": False,
+            "pre_crop_width": None,
+            "pre_crop_height": None,
+            "final_width": None,
+            "final_height": None,
+            "crop_pixels": None
+        }
+
+
 
 # Type definition helper
 from typing import Tuple

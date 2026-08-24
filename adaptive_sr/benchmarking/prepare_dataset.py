@@ -38,6 +38,7 @@ from adaptive_sr.profiling.profile_video import run_profiler
 
 # Constants for Step 5.1 design
 SCHEMA_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.0.0"
 DEFAULT_DATASET_ID = "benchmark_corpus_v1"
 
 # Motion speeds in pixels per second (under 30fps baseline, distance covered is constant)
@@ -147,6 +148,12 @@ def validate_dataset(manifest_path: str) -> bool:
     # Check manifest-level fields
     if manifest.get("schema_version") != SCHEMA_VERSION:
         print(f"ERROR: Invalid schema version: {manifest.get('schema_version')}")
+        return False
+    if manifest.get("dataset_schema_version") != SCHEMA_VERSION:
+        print(f"ERROR: Invalid dataset schema version: {manifest.get('dataset_schema_version')}")
+        return False
+    if manifest.get("generator_version") != GENERATOR_VERSION:
+        print(f"ERROR: Invalid generator version: {manifest.get('generator_version')}")
         return False
 
     base_dir = os.path.dirname(os.path.dirname(manifest_path))
@@ -374,6 +381,8 @@ def prepare_dataset(
     # Write the global benchmark manifest JSON
     benchmark_manifest = {
         "schema_version": SCHEMA_VERSION,
+        "dataset_schema_version": SCHEMA_VERSION,
+        "generator_version": GENERATOR_VERSION,
         "dataset_id": DEFAULT_DATASET_ID,
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
         "config": {

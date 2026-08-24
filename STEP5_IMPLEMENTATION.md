@@ -832,6 +832,48 @@ Automated tests in [`tests/test_benchmark_harness.py`](file:///d:/Full%20Stack/A
 - Correct mathematical statistics calculations and percentile method documentation.
 - Graceful skipping of GPU runs in environments without CUDA.
 - Graceful error capturing for single-trial failure.
-- Warmup runs execution and their exclusion from steady-state statistics.
 - Direct integration smoke test with the real lightweight FSRCNN model (`tinysr`) on CPU.
+
+---
+
+### 7. Pre-5.5 Hardening Pass Addendum
+
+#### A. Synthetic Corpus Non-Keyframe GOP Boundary Note
+> [!NOTE]
+> The synthetic benchmark corpus uses controlled encoding and does not fully exercise production H.264 GOP/keyframe boundary behavior. Production video may contain chunk boundaries that do not align with keyframes. Therefore, Step 5.1 validates benchmark-input preparation and association, but does NOT claim to validate arbitrary production H.264 chunk boundary correctness.
+
+#### B. Real-ESRGAN x2 Verification Method and Result
+Verification method: Inspected the actual model construction and weight paths inside `realesrgan_backend.py`. The backend initializes a native `RRDBNet` generator architecture directly specifying `scale=scale` (which is `2` in our configuration), loading the dedicated `RealESRGAN_x2plus.pth` checkpoint, and passing it to the `RealESRGANer` upsampler wrapper. We verified that the model's pre-postprocessing/pre-crop output tensor dimensions are exactly double the input dimensions (e.g. `(720, 1280, 3)` for a `(360, 640, 3)` input), confirming no intermediate `x4` inference computation or subsequent downsampling to `x2` is executed. Therefore, the execution path is a native x2 model compute path.
+
+#### C. Real-ESRGAN Crop Visibility
+Real-ESRGAN output dimensions are strictly validated. If any crop operations occur, they are made visible in the output metadata under `crop_metadata` with:
+- `crop_applied`: bool
+- `pre_crop_width` & `pre_crop_height`
+- `final_width` & `final_height`
+- `crop_pixels_if_available`
+
+#### D. CPU Selection Policy & ProcessMonitor Contention
+- CPU exclusion allows sensitivity analysis by excluding CPU 0 (`exclude_cpu_ids=[0]`), reducing background noise from common system interrupts.
+- Core-0 inclusion remains the default for backward compatibility.
+- *ProcessMonitor Contention:* `ProcessMonitor` runs inside the benchmark process, so it is subject to the same affinity mask. At very small affinity masks (e.g. 1 logical core), monitor sampling may contend with inference. Interpret low-core results with this limitation. Do not mathematically subtract overhead.
+
+#### E. GPU Sampling Limitations & Shared GPU Contamination
+- *GPU Sampling Limits:* A 0.5-second periodic GPUMonitor is preserved. However, for short single-chunk inference operations, especially operations whose duration is substantially below 0.5 seconds, periodic NVML utilization samples may miss the GPU-busy interval entirely. Therefore, periodic GPU utilization MUST NOT be treated as a reliable per-inference GPU-utilization measurement. For the benchmark campaign, latency, GPU memory, and GPU availability/device identity remain usable measurements. Periodic GPU utilization should be interpreted primarily as sustained-load / aggregate utilization characterization. We do not generate or infer a fake per-inference utilization percentage when no valid sample overlaps the workload, representing unavailable/insufficient utilization data explicitly.
+- *Shared GPU Contamination:* NVML utilization is device-wide. On shared machines (such as shared Azure GPU VMs), other processes contribute to observed utilization. NVML measurements do not represent exclusive AdaptiveSR workload.
+
+#### F. P95 Confidence & Warmup Telemetry Separation
+- *P95 confidence:* At `n=20`, p95 statistics are explicitly annotated as `"Exploratory p95; limited tail resolution at n=20."`.
+- *Warmup Telemetry Separation:* Resource telemetry is collected separately during the warmup phase and measured trials. Results record `warmup_resource_summary` and `resource_summary` as distinct structures.
+
+#### G. Session-to-Session Support
+Harness supports repeated independent sessions under the same case mapping. Sessions preserve their raw values and session-level metadata (CPU/GPU info, timestamps, configurations) without pooling them, allowing within-session and between-session variance analysis.
+
+#### H. Thermal & Throttling Limitations
+Laptop thermal state, CPU thermal throttling, GPU thermal throttling, and background OS activity may significantly contribute to between-session variance. When reliable thermal telemetry is unavailable from the execution environment, `thermal_state` must be recorded explicitly as `"not_measured"`. The absence of thermal telemetry must be explicit, rather than silently assumed to mean "thermally stable".
+
+#### I. Session Count & Decision-Quality Policy
+We define clear session policies to govern benchmarking workflows:
+- **Smoke test / Development benchmark:** Typically runs 1 session to verify code functionality quickly.
+- **Decision-quality benchmark:** Requires a **minimum of 3 independent sessions** per configuration. The CPU-vs-GPU decision must be supported by multiple runs to analyze variance and prevent decisions based on a single outlier session. Sessions are preserved individually and must not be pooled.
+
 

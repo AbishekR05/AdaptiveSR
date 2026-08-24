@@ -348,3 +348,74 @@ def test_validator_rejects_altered_manifest_chunk_hash(temp_dataset_dir):
         assert not success, "Validator passed despite the manifest hash being manually altered."
     finally:
         shutil.rmtree(test_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# 17. Generator and schema version metadata validation
+# ---------------------------------------------------------------------------
+
+def test_manifest_version_metadata(temp_dataset_dir):
+    """Verifies that generator_version and dataset_schema_version exist and are validated."""
+    manifest_path = os.path.join(temp_dataset_dir, "manifests", "benchmark_manifest.json")
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    assert manifest.get("dataset_schema_version") == SCHEMA_VERSION
+    assert manifest.get("generator_version") == "1.0.0"
+
+    # Verify that changing them fails validation
+    test_dir = tempfile.mkdtemp(suffix="_version_test")
+    try:
+        shutil.copytree(temp_dataset_dir, test_dir, dirs_exist_ok=True)
+        m_path = os.path.join(test_dir, "manifests", "benchmark_manifest.json")
+
+        # Tamper generator_version
+        with open(m_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["generator_version"] = "99.0.0"
+        with open(m_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        assert not validate_dataset(m_path), "Validator should fail on invalid generator_version"
+
+        # Tamper dataset_schema_version
+        data["generator_version"] = "1.0.0"
+        data["dataset_schema_version"] = "99.0.0"
+        with open(m_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        assert not validate_dataset(m_path), "Validator should fail on invalid dataset_schema_version"
+    finally:
+        shutil.rmtree(test_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# 18. Non-keyframe chunk boundary support
+# ---------------------------------------------------------------------------
+
+def test_non_keyframe_chunk_boundary_compatibility(temp_dataset_dir):
+    """Verifies that validation passes even when chunk boundaries do not align with GOP/keyframes."""
+    test_dir = tempfile.mkdtemp(suffix="_gop_test")
+    try:
+        shutil.copytree(temp_dataset_dir, test_dir, dirs_exist_ok=True)
+        manifest_path = os.path.join(test_dir, "manifests", "benchmark_manifest.json")
+
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        # Manually alter chunk boundaries of first video to represent non-keyframe chunk bounds
+        # Original: chunk 0 is frames 0-59 (60 frames), chunk 1 is frames 60-119 (60 frames)
+        # Modify to: chunk 0 ends at 37 (non-keyframe), chunk 1 starts at 38
+        chunks = manifest["videos"][0]["chunks"]
+        chunks[0]["end_frame"] = 37
+        chunks[0]["frame_count"] = 38
+        chunks[1]["start_frame"] = 38
+        chunks[1]["frame_count"] = 82  # 119 - 38 + 1
+
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=4)
+
+        # Validation must pass, proving the logic does not assume keyframe alignment
+        success = validate_dataset(manifest_path)
+        assert success, "Validator failed on non-keyframe chunk boundaries."
+    finally:
+        shutil.rmtree(test_dir, ignore_errors=True)
+

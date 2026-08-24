@@ -6,7 +6,7 @@ Step 5.2 — Real-ESRGAN Adapter Wrapper.
 
 import sys
 import types
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import numpy as np
 
 # Apply torchvision compatibility patch prior to importing basicsr/realesrgan
@@ -38,6 +38,14 @@ class RealESRGANAdapter(BaseSRAdapter):
         self._scale: Optional[int] = None
         self._initialized: bool = False
         self._backend_module = None
+        self._last_crop_metadata: Dict[str, Any] = {
+            "crop_applied": False,
+            "pre_crop_width": None,
+            "pre_crop_height": None,
+            "final_width": None,
+            "final_height": None,
+            "crop_pixels_if_available": None
+        }
 
     @property
     def model_id(self) -> str:
@@ -116,6 +124,15 @@ class RealESRGANAdapter(BaseSRAdapter):
         if not self._initialized or self._backend_module is None:
             raise RuntimeError(f"[{self.model_id}] Adapter has not been initialized.")
 
+        self._last_crop_metadata = {
+            "crop_applied": False,
+            "pre_crop_width": None,
+            "pre_crop_height": None,
+            "final_width": None,
+            "final_height": None,
+            "crop_pixels": None
+        }
+
         enhanced_frames = []
         for frame in frames:
             # We call backend infer with BGR frame
@@ -127,11 +144,47 @@ class RealESRGANAdapter(BaseSRAdapter):
             expected_w = w_in * self._scale
             
             h_out, w_out, _ = out.shape
+            width_diff = w_out - expected_w
+            height_diff = h_out - expected_h
+            
+            # Sanity check: Real-ESRGAN padding/tiling output size delta is normally <= 64 pixels.
+            # If the output size exceeds the expected scale size by more than 64 pixels per dimension,
+            # this represents an unexpectedly large crop operation.
+            CROP_THRESHOLD_PX = 64
+            if width_diff > CROP_THRESHOLD_PX or height_diff > CROP_THRESHOLD_PX or width_diff < 0 or height_diff < 0:
+                raise ValueError(
+                    f"Unexpectedly large crop detected during Real-ESRGAN upscaling. "
+                    f"Expected shape: {expected_h}x{expected_w}, got shape: {h_out}x{w_out}. "
+                    f"Width difference: {width_diff}px, Height difference: {height_diff}px. "
+                    f"Maximum allowable boundary padding is {CROP_THRESHOLD_PX}px."
+                )
+
             if h_out != expected_h or w_out != expected_w:
                 out = out[:expected_h, :expected_w, :]
+                crop_pixels = (h_out * w_out) - (expected_h * expected_w)
+                self._last_crop_metadata = {
+                    "crop_applied": True,
+                    "pre_crop_width": w_out,
+                    "pre_crop_height": h_out,
+                    "final_width": expected_w,
+                    "final_height": expected_h,
+                    "crop_pixels": crop_pixels
+                }
+            else:
+                self._last_crop_metadata = {
+                    "crop_applied": False,
+                    "pre_crop_width": w_out,
+                    "pre_crop_height": h_out,
+                    "final_width": expected_w,
+                    "final_height": expected_h,
+                    "crop_pixels": 0
+                }
                 
             enhanced_frames.append(out)
         return enhanced_frames
+
+    def get_last_inference_metadata(self) -> Dict[str, Any]:
+        return self._last_crop_metadata
 
     def close(self) -> None:
         # Caches locally; nothing to release

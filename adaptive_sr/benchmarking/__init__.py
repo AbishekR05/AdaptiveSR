@@ -4,5 +4,6 @@
 from adaptive_sr.benchmarking.harness import (
     BenchmarkConfig,
     BenchmarkResult,
+    MultiSessionResult,
     InferenceBenchmarkHarness
 )

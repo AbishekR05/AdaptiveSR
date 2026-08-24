@@ -11,6 +11,7 @@ import pytest
 import numpy as np
 from datetime import datetime
 from unittest.mock import MagicMock, patch
+import json
 
 from typing import List, Dict, Any, Tuple, Union, Optional
 
@@ -277,8 +278,8 @@ def test_cpu_execution_affinity_and_monitoring(register_dummy_adapter):
             # Verify that affinity was set to [0] during entry and restored to the previous mask on exit
             assert mock_affinity.call_count >= 2
             # Verify process monitor started and stopped
-            assert mock_start.call_count == 1
-            assert mock_stop.call_count == 1
+            assert mock_start.call_count == 2
+            assert mock_stop.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -339,13 +340,25 @@ def test_gpu_benchmark_cuda_synchronization_and_monitoring(register_dummy_adapte
         assert result.successful_trials == 3
 
         # Verify GPU Monitor lifecycle calls
-        assert mock_gpu_start.call_count == 1
-        assert mock_gpu_stop.call_count == 1
+        assert mock_gpu_start.call_count == 2
+        assert mock_gpu_stop.call_count == 2
         
         # Verify resources summary matches mocked snapshot
         assert result.resource_summary.gpu_utilization_mean == 45.0
         assert result.resource_summary.memory_allocated_before_mb == 100.0
         assert result.resource_summary.memory_allocated_after_mb == 100.0
+
+    # Test that empty GPU samples result in None utilization mean (no fake utilisation)
+    with patch("adaptive_sr.benchmarking.harness.get_cuda_availability", return_value=mock_avail), \
+         patch("torch.cuda.synchronize") as mock_sync, \
+         patch("adaptive_sr.benchmarking.harness.take_gpu_snapshot", return_value=dummy_snapshot), \
+         patch("adaptive_sr.benchmarking.gpu_measurement.GPUMonitor.start") as mock_gpu_start, \
+         patch("adaptive_sr.benchmarking.gpu_measurement.GPUMonitor.stop") as mock_gpu_stop, \
+         patch("adaptive_sr.benchmarking.gpu_measurement.GPUMonitor.get_samples", return_value=[]) as mock_gpu_samples_empty:
+
+        result_empty = harness.run_benchmark(cfg)
+        assert result_empty.resource_summary.gpu_utilization_mean is None
+        assert result_empty.resource_summary.gpu_utilization_peak is None
 
 
 def test_gpu_benchmark_skip_when_cuda_unavailable(register_dummy_adapter):
@@ -472,3 +485,249 @@ def test_real_benchmark_integration_smoke():
     assert result.metadata["input_details"]["width"] == 640
     assert result.metadata["input_details"]["height"] == 360
     assert result.metadata["input_details"]["scale"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 8. Hardening and Invariant Tests
+# ---------------------------------------------------------------------------
+
+def test_select_cpu_ids_exclusion():
+    """Verifies that select_cpu_ids excludes requested CPU cores correctly."""
+    from adaptive_sr.benchmarking.cpu_control import select_cpu_ids, get_available_cpus
+    available = get_available_cpus()
+    if len(available) < 2:
+        pytest.skip("Test requires at least 2 logical cores.")
+
+    # Exclude logical core 0
+    selected = select_cpu_ids(count=1, exclude_cpu_ids=[0])
+    assert len(selected) == 1
+    assert 0 not in selected
+    assert selected[0] == 1
+
+
+def test_realesrgan_adapter_crop_metadata():
+    """Verifies that RealESRGANAdapter crop metadata is tracked and logged in result."""
+    from adaptive_sr.benchmarking.adapters.real_esrgan import RealESRGANAdapter
+    adapter = RealESRGANAdapter()
+    
+    # Verify initial crop state
+    init_meta = adapter.get_last_inference_metadata()
+    assert init_meta["crop_applied"] is False
+    assert init_meta["pre_crop_width"] is None
+
+    # Simulate crop execution
+    dummy_input = np.zeros((100, 100, 3), dtype=np.uint8)
+    dummy_output = np.zeros((202, 204, 3), dtype=np.uint8)  # Expected scale=2 output: 200x200
+    
+    with patch.object(adapter, "_backend_module") as mock_backend:
+        mock_backend.infer.return_value = dummy_output
+        adapter._device = "cpu"
+        adapter._scale = 2
+        adapter._initialized = True
+        
+        enhanced = adapter._run_inference([dummy_input])
+        assert enhanced[0].shape == (200, 200, 3)
+        
+        meta = adapter.get_last_inference_metadata()
+        assert meta["crop_applied"] is True
+        assert meta["pre_crop_width"] == 204
+        assert meta["pre_crop_height"] == 202
+        assert meta["final_width"] == 200
+        assert meta["final_height"] == 200
+        assert meta["crop_pixels"] == (202 * 204) - (200 * 200)
+
+    # Test unexpectedly large crop (height exceeds by 65 pixels)
+    bad_output = np.zeros((265, 200, 3), dtype=np.uint8)
+    with patch.object(adapter, "_backend_module") as mock_backend:
+        mock_backend.infer.return_value = bad_output
+        with pytest.raises(ValueError, match="Unexpectedly large crop detected"):
+            adapter._run_inference([dummy_input])
+
+
+def test_latency_statistics_p95_low_sample_annotation(register_dummy_adapter):
+    """Verifies p95 annotations and confidence notes are populated correctly."""
+    harness = InferenceBenchmarkHarness()
+    
+    # Test case 1: n = 5 (exploratory tail warning)
+    cpu_conf = CPUExecutionConfig(cpu_ids=[0], num_threads=1)
+    cfg = BenchmarkConfig(
+        model_id="dummy_harness_adapter",
+        scale=2,
+        input_id="synthetic_lowmotion_30fps",
+        device="cpu",
+        cpu_config=cpu_conf,
+        warmup_runs=1,
+        measured_runs=5
+    )
+    result = harness.run_benchmark(cfg)
+    assert result.latency_statistics.p95_sample_count == 5
+    assert "Exploratory p95" in result.latency_statistics.p95_confidence_note
+
+    # Test case 2: n = 25 (sufficient tail warning)
+    cfg_25 = BenchmarkConfig(
+        model_id="dummy_harness_adapter",
+        scale=2,
+        input_id="synthetic_lowmotion_30fps",
+        device="cpu",
+        cpu_config=cpu_conf,
+        warmup_runs=1,
+        measured_runs=25
+    )
+    result_25 = harness.run_benchmark(cfg_25)
+    assert result_25.latency_statistics.p95_sample_count == 25
+    assert "Sufficient tail resolution" in result_25.latency_statistics.p95_confidence_note
+
+
+def test_warmup_telemetry_separation(register_dummy_adapter):
+    """Verifies that warmup resource summaries are tracked separately from trials."""
+    harness = InferenceBenchmarkHarness()
+    cpu_conf = CPUExecutionConfig(cpu_ids=[0], num_threads=1)
+    cfg = BenchmarkConfig(
+        model_id="dummy_harness_adapter",
+        scale=2,
+        input_id="synthetic_lowmotion_30fps",
+        device="cpu",
+        cpu_config=cpu_conf,
+        warmup_runs=2,
+        measured_runs=3
+    )
+
+    result = harness.run_benchmark(cfg)
+    assert result.warmup_resource_summary is not None
+    assert result.resource_summary is not None
+
+
+def test_cross_step_frame_count_invariant():
+    """Verifies the frame count invariant matching Step 2 schema vs Step 5.1 manifest."""
+    manifest_path = "data/benchmarks/sr/manifests/benchmark_manifest.json"
+    if not os.path.exists(manifest_path):
+        pytest.skip("Manifest not generated, skipping invariant test.")
+        
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    # Invariant: local_frame_count == round(logical_duration * rep_fps)
+    # Check all videos and chunks
+    for video in manifest.get("videos", []):
+        fps = video["source_fps"]
+        for chunk in video.get("chunks", []):
+            duration = chunk["duration_seconds"]
+            frame_count = chunk["frame_count"]
+            expected_frame_count = int(round(duration * fps))
+            # Step 2 mapping contract allows a tolerance of 1 frame
+            assert abs(frame_count - expected_frame_count) <= 1
+
+    # Verify boundary-sensitive durations where floating-point rounding is tested
+    # E.g., at 30 FPS:
+    # 2.0166s -> expected = round(2.0166 * 30) = round(60.498) = 60
+    # 2.0167s -> expected = round(2.0167 * 30) = round(60.501) = 61
+    assert int(round(2.0166 * 30)) == 60
+    assert int(round(2.0167 * 30)) == 61
+
+    # 1.9999s -> expected = round(1.9999 * 30) = round(59.997) = 60
+    # 2.0001s -> expected = round(2.0001 * 30) = round(60.003) = 60
+    assert int(round(1.9999 * 30)) == 60
+    assert int(round(2.0001 * 30)) == 60
+
+
+def test_multi_session_benchmark_execution(register_dummy_adapter):
+    """Verifies run_multi_session executes multiple isolated sessions."""
+    harness = InferenceBenchmarkHarness()
+    cpu_conf = CPUExecutionConfig(cpu_ids=[0], num_threads=1)
+    cfg = BenchmarkConfig(
+        model_id="dummy_harness_adapter",
+        scale=2,
+        input_id="synthetic_lowmotion_30fps",
+        device="cpu",
+        cpu_config=cpu_conf,
+        warmup_runs=1,
+        measured_runs=3
+    )
+
+    multi_res = harness.run_multi_session(cfg, num_sessions=2)
+    assert multi_res.metadata["num_sessions"] == 2
+    assert len(multi_res.sessions) == 2
+    
+    # Sessions must remain isolated and uniquely identified
+    assert multi_res.sessions[0].benchmark_id.endswith("session_1")
+    assert multi_res.sessions[1].benchmark_id.endswith("session_2")
+    assert multi_res.sessions[0].trial_latencies != multi_res.sessions[1].trial_latencies
+
+
+def test_cpu_decision_run_policy_validation():
+    """Verifies that decision run configurations enforce exclude_cpu_ids=[0] on CPU."""
+    # 1. Invalid: is_decision_run=True, but CPU 0 is not excluded
+    cpu_conf_invalid = CPUExecutionConfig(cpu_ids=[0], num_threads=1, exclude_cpu_ids=[])
+    with pytest.raises(ValueError, match="must explicitly exclude CPU 0"):
+        BenchmarkConfig(
+            model_id="dummy_harness_adapter",
+            scale=2,
+            input_id="synthetic_lowmotion_30fps",
+            device="cpu",
+            cpu_config=cpu_conf_invalid,
+            is_decision_run=True
+        )
+
+    # 2. Valid: is_decision_run=True, CPU 0 is excluded
+    cpu_conf_valid = CPUExecutionConfig(cpu_ids=[1], num_threads=1, exclude_cpu_ids=[0])
+    cfg = BenchmarkConfig(
+        model_id="dummy_harness_adapter",
+        scale=2,
+        input_id="synthetic_lowmotion_30fps",
+        device="cpu",
+        cpu_config=cpu_conf_valid,
+        is_decision_run=True
+    )
+    assert cfg.is_decision_run is True
+
+    # 3. Valid: is_decision_run=True, CPU 0 is included but cpu_0_intentional is True
+    cfg_intentional = BenchmarkConfig(
+        model_id="dummy_harness_adapter",
+        scale=2,
+        input_id="synthetic_lowmotion_30fps",
+        device="cpu",
+        cpu_config=cpu_conf_invalid,
+        is_decision_run=True,
+        cpu_0_intentional=True
+    )
+    assert cfg_intentional.cpu_0_intentional is True
+
+
+def test_latency_statistics_completeness_and_metadata(register_dummy_adapter):
+    """Verifies that LatencyStatistics exposes complete fields and HostMetadata includes thermal_state."""
+    harness = InferenceBenchmarkHarness()
+    cpu_conf = CPUExecutionConfig(cpu_ids=[0], num_threads=1, exclude_cpu_ids=[])
+    cfg = BenchmarkConfig(
+        model_id="dummy_harness_adapter",
+        scale=2,
+        input_id="synthetic_lowmotion_30fps",
+        device="cpu",
+        cpu_config=cpu_conf,
+        warmup_runs=1,
+        measured_runs=3
+    )
+
+    result = harness.run_benchmark(cfg)
+    
+    # 1. Verify complete stats fields
+    stats = result.latency_statistics
+    assert stats.min_latency == stats.min
+    assert stats.median_latency == stats.median
+    assert stats.mean_latency == stats.mean
+    assert stats.max_latency == stats.max
+    assert stats.std_latency == stats.std_dev
+    assert stats.p95_latency == stats.p95
+    assert stats.measured_trial_count == stats.count
+    assert stats.measured_trial_count == 3
+
+    # 2. Verify thermal_state exists and defaults to "not_measured"
+    host_meta = result.metadata["host_metadata"]
+    assert host_meta["thermal_state"] == "not_measured"
+
+    # 3. Verify session_id is recorded in metadata
+    assert result.metadata["session_id"] == result.benchmark_id
+    assert "timestamp" in result.metadata
+    assert "benchmark_config" in result.metadata
+
+
+
