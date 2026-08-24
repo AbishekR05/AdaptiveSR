@@ -1,0 +1,14 @@
+{
+    "schema_version": "1.0.0",
+    "video_id": "input_trimmed",
+    "source_file_path": "D:\\Full Stack\\AdaptiveSR\\input_trimmed.mp4",
+    "source_file_hash": "7b60201a04658a74a442cd88d89b582cb46af6f024b24db43f5d56b650de0461",
+    "generated_profile_path": "D:\\Full Stack\\AdaptiveSR\\data\\profiles\\input_trimmed_profile.json",
+    "chunks": [
+        {
+            "chunk_id": "0000",
+            "file_path": "chunks\\input_trimmed_0000.mp4",
+            "file_hash": "7b60201a04658a74a442cd88d89b582cb46af6f024b24db43f5d56b650de0461"
+        }
+    ]
+}

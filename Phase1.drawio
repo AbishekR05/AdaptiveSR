@@ -1,12 +1,12 @@
 <mxfile host="app.diagrams.net">
   <diagram name="Page-1" id="XVAb_vWvevHboECU8EeY">
-    <mxGraphModel dx="1212" dy="620" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="710" dy="363" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
         <UserObject label="" mermaidData="{&#xa;  &quot;data&quot;: &quot;flowchart TD\n    %% Define Styling and Colors\n    classDef source fill:#f8cecc,stroke:#b85450,stroke-width:2px;\n    classDef acq fill:#fff2cc,stroke:#d6b656,stroke-width:2px;\n    classDef monitors fill:#dae8fc,stroke:#6c8ebf,stroke-width:1px;\n    classDef decision fill:#d5e8d4,stroke:#82b366,stroke-width:2px;\n    classDef selectors fill:#e1d5e7,stroke:#9673a6,stroke-width:1px;\n    classDef engine fill:#ffe6cc,stroke:#d79b00,stroke-width:2px;\n    \n    %% Input Layer\n    subgraph Inputs [\&quot;Input Layer\&quot;]\n        A[\&quot;Input Source&lt;br&gt;• Local Video&lt;br&gt;• YouTube URL&lt;br&gt;• Live Stream\&quot;]:::source\n        B[\&quot;Input Acquisition Layer&lt;br&gt;(Download / Decode)\&quot;]:::acq\n    end\n    \n    %% Telemetry &amp; Analysis Layer\n    subgraph Telemetry [\&quot;Monitoring &amp; Telemetry Layer\&quot;]\n        C[\&quot;Network Monitor&lt;br&gt;• Bandwidth&lt;br&gt;• Bitrate&lt;br&gt;• Latency&lt;br&gt;• Connection Type\&quot;]:::monitors\n        D[\&quot;Device Monitor&lt;br&gt;• CPU Usage&lt;br&gt;• GPU Usage&lt;br&gt;• RAM Usage&lt;br&gt;• Battery&lt;br&gt;• Temperature\&quot;]:::monitors\n        E[\&quot;Scene Analyzer&lt;br&gt;• Motion&lt;br&gt;• Texture&lt;br&gt;• Complexity&lt;br&gt;• Edge Density&lt;br&gt;• Semantic Score\&quot;]:::monitors\n    end\n    \n    %% Decision Layer\n    subgraph Decision [\&quot;Decision Core\&quot;]\n        F[\&quot;Adaptive Decision Engine&lt;br&gt;Multi-Criteria Decision Making&lt;br&gt;(QoE + Resource Optimization)\&quot;]:::decision\n    end\n    \n    %% Allocation Layer\n    subgraph Selectors [\&quot;Selector Controls\&quot;]\n        G[\&quot;Bitrate Selector&lt;br&gt;• 480p / 720p&lt;br&gt;• 1080p&lt;br&gt;• 4K\&quot;]:::selectors\n        H[\&quot;Model Selector&lt;br&gt;• BasicVSR++&lt;br&gt;• Real-ESRGAN&lt;br&gt;• TinySR\&quot;]:::selectors\n        I[\&quot;Scale Selector&lt;br&gt;• ×2&lt;br&gt;• ×4&lt;br&gt;• Native\&quot;]:::selectors\n    end\n    \n    %% Processing Layer\n    subgraph CoreEngine [\&quot;Enhancement &amp; Reconstruction\&quot;]\n        J[\&quot;Video Super-Resolution Engine\&quot;]:::engine\n        K[\&quot;Reconstruction &amp; Post-processing\&quot;]:::engine\n        L[\&quot;Enhanced Output Video\&quot;]:::decision\n    end\n    \n    %% Connections\n    A --&gt; B\n    B --&gt; C\n    B --&gt; D\n    B --&gt; E\n    \n    C --&gt; F\n    D --&gt; F\n    E --&gt; F\n    \n    F --&gt; G\n    F --&gt; H\n    F --&gt; I\n    \n    G --&gt; J\n    H --&gt; J\n    I --&gt; J\n    \n    J --&gt; K\n    K --&gt; L\n&quot;,&#xa;  &quot;config&quot;: null&#xa;}" id="hjOzajdE--5uiNr2phXu-129">
           <mxCell connectable="0" parent="1" style="group;transparentBounds=1;editIcon=1;lockedGroup=0;groupPadding=10;" vertex="1">
-            <mxGeometry as="geometry" />
+            <mxGeometry height="1390" width="365" as="geometry" />
           </mxCell>
         </UserObject>
         <UserObject label="Input Layer" mermaidId="n:Inputs" mermaidBaseStyle="html=1;whiteSpace=wrap;strokeWidth=1;verticalAlign=top;fillColor=light-dark(#ffffde,#1f2020);strokeColor=light-dark(#aaaa33,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" mermaidBaseValue="Input Layer" id="hjOzajdE--5uiNr2phXu-130">
@@ -51,6 +51,11 @@
             <mxGeometry height="150" width="183" x="35" y="45" as="geometry" />
           </mxCell>
         </UserObject>
+        <mxCell id="xMVILIMPz4cIKqL-MZEo-4" edge="1" parent="hjOzajdE--5uiNr2phXu-129" source="hjOzajdE--5uiNr2phXu-138" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="189.99999999999977" y="1387" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
         <UserObject label="Decision Core" mermaidId="n:Decision" mermaidBaseStyle="html=1;whiteSpace=wrap;strokeWidth=1;verticalAlign=top;fillColor=light-dark(#ffffde,#1f2020);strokeColor=light-dark(#aaaa33,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" mermaidBaseValue="Decision Core" id="hjOzajdE--5uiNr2phXu-138">
           <mxCell parent="hjOzajdE--5uiNr2phXu-129" style="html=1;whiteSpace=wrap;strokeWidth=1;verticalAlign=top;fillColor=light-dark(#ffffde,#1f2020);strokeColor=light-dark(#aaaa33,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" vertex="1">
             <mxGeometry height="163" width="349" x="506" y="1305" as="geometry" />
@@ -243,6 +248,21 @@
             </mxGeometry>
           </mxCell>
         </UserObject>
+        <mxCell id="xMVILIMPz4cIKqL-MZEo-7" parent="hjOzajdE--5uiNr2phXu-129" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="loops for every chunks" vertex="1">
+          <mxGeometry height="30" width="95" x="260" y="1350" as="geometry" />
+        </mxCell>
+        <mxCell id="xMVILIMPz4cIKqL-MZEo-5" edge="1" parent="1" style="endArrow=none;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="190" y="1910" as="sourcePoint" />
+            <mxPoint x="190" y="1390" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="xMVILIMPz4cIKqL-MZEo-6" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;entryX=0.007;entryY=0.644;entryDx=0;entryDy=0;entryPerimeter=0;" target="hjOzajdE--5uiNr2phXu-144" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="190" y="1910" as="sourcePoint" />
+            <mxPoint x="190" y="1920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>

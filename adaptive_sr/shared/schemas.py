@@ -489,3 +489,93 @@ class ProcessResourceSnapshot(BaseModel):
     cpu_percent: float          # % of one logical core; >100 = multi-threaded
     memory_used_bytes: int      # RSS in bytes
     memory_percent: float       # RSS / total RAM × 100
+
+
+class GPUSnapshot(BaseModel):
+    """Step 5.4 — GPU Measurement Snapshot.
+
+    Represents a single point-in-time observation of GPU telemetry for a
+    specific CUDA device.
+
+    DESIGN RATIONALE
+    ----------------
+    Three distinct memory concepts are tracked and MUST NOT be confused:
+
+      gpu_memory_total_bytes    : Device-wide total VRAM (from NVML or PyTorch).
+      gpu_memory_free_bytes     : Device-wide free VRAM (from NVML when available).
+      process_gpu_memory_allocated_bytes : Memory currently held by live tensors
+                                           in THIS process (PyTorch caching allocator).
+      process_gpu_memory_reserved_bytes  : Memory reserved by the PyTorch caching
+                                           allocator for this process (includes
+                                           fragmentation slack).
+
+    NVML vs. PyTorch allocator distinction:
+      - gpu_utilization_percent / memory_utilization_percent come from NVML and
+        describe the ENTIRE device, not a specific process.
+      - process_gpu_memory_* come from the PyTorch caching allocator and describe
+        THIS process only.
+      - These are fundamentally different and MUST NOT be interchanged.
+
+    None semantics:
+      - None means the value is genuinely unavailable from the current backend.
+      - None is NOT equivalent to 0.  0% utilization is a meaningful measurement.
+      - When NVML is unavailable, utilization fields MUST be None, not 0.
+
+    FIELDS
+    ------
+    timestamp : str
+        ISO-8601 UTC timestamp of the observation.
+
+    device_id : int
+        CUDA device index (e.g. 0 for cuda:0).
+
+    gpu_name : str
+        Human-readable GPU name from the backend (e.g. 'NVIDIA GeForce RTX 4090').
+
+    gpu_utilization_percent : Optional[float]
+        Device-wide GPU SM utilization [0, 100] from NVML.
+        None if NVML is unavailable — NOT 0.
+
+    memory_utilization_percent : Optional[float]
+        Device-wide GPU memory bus utilization [0, 100] from NVML.
+        None if NVML is unavailable — NOT 0.
+        NOTE: this is memory-bus utilization, NOT VRAM occupancy percentage.
+
+    gpu_memory_total_bytes : Optional[int]
+        Total VRAM on the device in bytes (device-wide).
+        From NVML when available, else from torch.cuda.get_device_properties().
+
+    gpu_memory_free_bytes : Optional[int]
+        Free VRAM on the device in bytes (device-wide).
+        From NVML when available. None if NVML is unavailable.
+
+    process_gpu_memory_allocated_bytes : Optional[int]
+        Bytes currently allocated by live tensors in this process.
+        Source: torch.cuda.memory_allocated(device_id).
+        None if PyTorch CUDA is not available for this device.
+
+    process_gpu_memory_reserved_bytes : Optional[int]
+        Bytes reserved by the PyTorch caching allocator for this process
+        (includes slack from freed tensors not yet returned to the OS).
+        Source: torch.cuda.memory_reserved(device_id).
+        None if PyTorch CUDA is not available for this device.
+
+    nvml_available : bool
+        True if NVML was successfully used to obtain device-level metrics.
+        False if NVML is unavailable; in that case utilization fields are None.
+
+    utilization_source : str
+        Documents which backend provided utilization data.
+        One of: 'nvml', 'pytorch_allocator', 'unavailable'.
+    """
+    timestamp: str
+    device_id: int
+    gpu_name: str
+    gpu_utilization_percent: Optional[float] = None         # None when NVML absent
+    memory_utilization_percent: Optional[float] = None      # None when NVML absent
+    gpu_memory_total_bytes: Optional[int] = None            # device-wide total VRAM
+    gpu_memory_free_bytes: Optional[int] = None             # device-wide free VRAM (NVML)
+    process_gpu_memory_allocated_bytes: Optional[int] = None  # process-level (torch allocator)
+    process_gpu_memory_reserved_bytes: Optional[int] = None   # process-level (torch allocator)
+    nvml_available: bool = False
+    utilization_source: str = "unavailable"                 # 'nvml' | 'pytorch_allocator' | 'unavailable'

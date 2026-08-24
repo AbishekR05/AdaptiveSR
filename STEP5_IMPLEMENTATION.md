@@ -364,3 +364,474 @@ Tests in [`tests/test_cpu_control.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/
 - **B. ProcessMonitor Contention**: The ProcessMonitor runs as a background thread inside the same benchmark process, meaning it shares the restricted CPU affinity mask. For small core configurations (especially 1 CPU), the monitor's CPU sampling overhead can introduce contention and influence latency measurements. This is a measurement-system limitation; future steps must use conservative sampling rates and document this impact when interpreting low-core results.
 - **C. Context Ordering**: The CPU affinity mask is applied and verified *before* the ProcessMonitor is started. This ensures that the monitor's background thread executes entirely within the constrained hardware layout, providing consistent resource measurements from the first sample.
 - **D. Methodological Limits**: These affinity and monitoring hooks represent experimental control mechanisms for benchmarking, not runtime resource allocation or placement schedulers.
+
+---
+---
+
+## Step 5.4 — GPU Measurement
+
+> [!IMPORTANT]
+> **Step 5.4 provides GPU measurement infrastructure. It does NOT benchmark SR models.**
+> No inference timing, FPS, throughput, latency statistics, warmup, PSNR, SSIM, or model comparison is implemented here. Those belong to Steps 5.5–5.6.
+
+---
+
+### 0. GPU Measurement Modes (Correction Pass)
+
+Two distinct measurement modes are provided. They serve **different purposes** and must not be confused.
+
+#### Mode A — Periodic Monitoring (`GPUMonitor`)
+
+A background daemon thread calls `take_gpu_snapshot()` at a configurable interval.
+
+**Purpose:** Sustained workload characterisation. Aggregate utilisation observation across longer-running or repeated inference workloads (Step 5.5+).
+
+**Limitation:** Periodic sampling may **miss a single short-lived SR inference entirely** if the inference completes faster than the sampling interval. Therefore, GPUMonitor utilisation samples must NOT be treated as exact per-operation utilisation measurements.
+
+#### Mode B — Synchronous Snapshots (`take_gpu_snapshot` / `GPUMeasurementBoundary`)
+
+A single point-in-time GPU state capture via `take_gpu_snapshot()`, called explicitly before and after a bounded operation.
+
+**What a before/after snapshot pair CAN reliably provide:**
+- `process_gpu_memory_allocated_bytes` delta (process-level, PyTorch allocator)
+- `process_gpu_memory_reserved_bytes` delta (process-level, PyTorch allocator)
+- `gpu_memory_free_bytes` change (device-wide, NVML)
+- `gpu_memory_total_bytes` (constant reference)
+
+**What a before/after snapshot pair CANNOT reliably provide:**
+- Peak GPU utilisation during a short inference. NVML utilisation is sampled instantaneously at the moment of the call. If the GPU kernel has already completed, the reported utilisation may be 0% even if the device was fully saturated during execution.
+
+**Conclusion:**
+
+| Mode | Purpose |
+|---|---|
+| Periodic (Mode A) | Sustained utilisation characterisation |
+| Synchronous (Mode B) | Per-operation GPU memory/state boundaries |
+
+> [!WARNING]
+> **Neither mode is a substitute for explicit inference latency measurement.**
+> Step 5.5 MUST use `torch.cuda.synchronize()` around explicit timing boundaries for accurate latency.
+
+`GPUMeasurementBoundary` encapsulates a before/after snapshot pair and exposes memory delta helper properties (`memory_allocated_delta_bytes`, `memory_reserved_delta_bytes`, `free_memory_delta_bytes`). It contains **no timing or latency fields**.
+
+---
+
+### 0b. CPU / GPU Sampling Interval Policy (Correction Pass)
+
+CPU telemetry (Step 5.3 `BenchmarkProcessMonitor`, default 0.05 s) and GPU telemetry (Step 5.4 `GPUMonitor`, default 0.5 s) use **independently configurable sampling intervals**.
+
+**Rationale:** CPU and GPU telemetry have different collection mechanisms and overhead characteristics:
+- CPU measurement (`psutil.Process.cpu_percent`) blocks for the interval duration.
+- GPU measurement (NVML + PyTorch allocator) has different query latency and overhead.
+
+**Policy consequences:**
+- CPU and GPU utilisation curves must **NOT** be assumed to have identical temporal resolution merely because both are called "utilisation".
+- The primary latency measurement in Step 5.5 MUST be performed using explicit timing boundaries around inference — NOT inferred from either monitor's sampling interval.
+
+---
+
+### 0c. nvidia-ml-py Migration (Correction Pass)
+
+`requirements.txt` has been updated from the deprecated `pynvml==13.0.1` to the maintained `nvidia-ml-py` package.
+
+Both packages expose an identical `pynvml` Python module API — all `import pynvml` statements in source code remain valid. The migration is a `requirements.txt`-only change.
+
+**Why:** PyTorch's `torch/cuda/__init__.py` issues a `FutureWarning` flagging `pynvml` as deprecated and recommending `nvidia-ml-py`. Using `nvidia-ml-py` eliminates this warning and avoids changing GPU telemetry semantics mid-campaign.
+
+---
+
+### 1. Purpose & Objectives
+
+Step 5.4 establishes the GPU-side observability layer needed to support future GPU-accelerated SR benchmarking. It is the direct GPU equivalent of Step 5.3's CPU control infrastructure:
+
+| Step 5.3 | Step 5.4 |
+|---|---|
+| CPU affinity control | GPU device discovery |
+| `CPUExecutionConfig` | `GPUDeviceInfo` |
+| `BenchmarkProcessMonitor` | `GPUMonitor` |
+| `benchmark_execution_context` | `gpu_measurement_context` |
+| `ProcessResourceSnapshot` | `GPUSnapshot` |
+
+---
+
+### 2. Files Created
+
+| File | Purpose |
+|---|---|
+| [`adaptive_sr/benchmarking/gpu_measurement.py`](file:///d:/Full%20Stack/AdaptiveSR/adaptive_sr/benchmarking/gpu_measurement.py) | Core GPU measurement infrastructure |
+| [`tests/test_gpu_measurement.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_gpu_measurement.py) | 14-area test suite |
+| `adaptive_sr/shared/schemas.py` (modified) | `GPUSnapshot` Pydantic model appended |
+
+---
+
+### 3. CUDA Detection
+
+`get_cuda_availability()` returns a dict with three fields:
+
+```python
+{
+    "status": CUDAAvailability,   # UNAVAILABLE | NO_DEVICE | AVAILABLE
+    "device_count": int,
+    "device_ids": List[int],
+}
+```
+
+The `CUDAAvailability` enum distinguishes four states:
+
+| State | Meaning |
+|---|---|
+| `UNAVAILABLE` | `torch.cuda.is_available()` is False |
+| `NO_DEVICE` | CUDA runtime present but zero devices visible |
+| `AVAILABLE` | ≥1 CUDA device present and usable |
+
+**Behaviour when CUDA is requested but unavailable:**  
+`require_cuda(device_id)` raises `RuntimeError` with a clear, explicit message. There is no silent fall-back from CUDA to CPU.
+
+---
+
+### 4. GPU Discovery
+
+`list_gpus() -> List[GPUDeviceInfo]` enumerates all visible CUDA devices.
+
+- Returns `[]` on a CPU-only machine — this is **not an error**.
+- Each device is independently queryable via `get_gpu_info(device_id)`.
+- Multiple GPUs are identified independently as `cuda:0`, `cuda:1`, etc.
+
+---
+
+### 5. GPU Device Identity
+
+`GPUDeviceInfo` is a frozen dataclass capturing the minimum stable identity required for benchmark records:
+
+| Field | Required | Source |
+|---|---|---|
+| `device_id` | ✓ | `torch.cuda.device_count()` |
+| `device_name` | ✓ | `torch.cuda.get_device_properties().name` |
+| `total_memory_bytes` | ✓ | `torch.cuda.get_device_properties().total_memory` |
+| `compute_capability` | optional | `props.major + '.' + props.minor` |
+| `cuda_runtime_version` | optional | `torch.version.cuda` |
+| `pytorch_cuda_version` | optional | `torch.version.cuda` |
+| `driver_version` | optional | NVML `nvmlSystemGetDriverVersion` |
+
+A benchmark record must **never** identify a GPU only as `"GPU"` because multiple devices may exist. `device_name` always carries the hardware name (e.g. `"NVIDIA GeForce RTX 4090"`).
+
+---
+
+### 6. GPU Memory Measurement
+
+Three distinct memory quantities are tracked in `GPUSnapshot` and must **not** be conflated:
+
+| Field | What it measures | Source |
+|---|---|---|
+| `gpu_memory_total_bytes` | Device-wide total VRAM | NVML / PyTorch props |
+| `gpu_memory_free_bytes` | Device-wide free VRAM | NVML only |
+| `process_gpu_memory_allocated_bytes` | Live tensor bytes in THIS process | `torch.cuda.memory_allocated()` |
+| `process_gpu_memory_reserved_bytes` | Allocator slack for THIS process | `torch.cuda.memory_reserved()` |
+
+**PyTorch allocator semantics:**
+- `allocated` = memory currently held by live tensors (actual tensor usage)
+- `reserved` = memory held by the caching allocator, including slack from freed tensors
+- `reserved ≥ allocated` always
+
+**Device-wide vs. process-level:**  
+NVML memory figures are device-wide (all processes). PyTorch allocator figures are process-local. These are fundamentally different quantities and are stored in separate named fields with a `process_` prefix to make the distinction explicit.
+
+---
+
+### 7. GPU Utilization Measurement
+
+GPU utilization is provided via NVML (`pynvml`) when available:
+
+| Field | What it measures |
+|---|---|
+| `gpu_utilization_percent` | SM (compute) utilization across entire device — NOT process-specific |
+| `memory_utilization_percent` | Memory-bus utilization across entire device |
+
+> [!WARNING]
+> **NVML utilization is device-wide, not process-specific.**  
+> `gpu_utilization_percent = 80%` means 80% of the device's compute units are busy across **all processes**, not just the SR inference process. The future benchmark must clearly document this limitation when interpreting results.
+
+---
+
+### 8. NVML Availability
+
+`pynvml==13.0.1` is listed in `requirements.txt`. However, NVML may fail to initialise even when `pynvml` is importable (e.g., missing NVIDIA drivers, VM without GPU passthrough).
+
+**`NVMLContext`** handles this gracefully:
+- Wraps `pynvml.nvmlInit()` and `nvmlShutdown()` in a context manager.
+- On failure, sets `available=False` — callers branch on this flag.
+- Never raises on a CPU-only host.
+
+**Graceful degradation invariants (strict):**
+
+| Field | When NVML unavailable |
+|---|---|
+| `gpu_utilization_percent` | `None` — **NOT 0** |
+| `memory_utilization_percent` | `None` — **NOT 0** |
+| `gpu_memory_free_bytes` | `None` |
+| `nvml_available` | `False` |
+| `utilization_source` | `"pytorch_allocator"` or `"unavailable"` |
+
+Zero (0%) utilization is a **meaningful measurement** that must not be fabricated.
+
+---
+
+### 9. Sampling Lifecycle
+
+`GPUMonitor` provides a start/stop background sampling lifecycle:
+
+```python
+monitor = GPUMonitor(device_id=0, sample_interval=0.5)
+monitor.start()           # starts daemon thread
+# ... workload runs ...
+monitor.stop()            # joins thread — no zombie threads
+samples = monitor.get_samples()  # List[GPUSnapshot]
+```
+
+Or via context manager (preferred — guaranteed cleanup):
+
+```python
+with GPUMonitor(device_id=0) as monitor:
+    run_workload()
+samples = monitor.get_samples()
+```
+
+Or via `@contextmanager` wrapper:
+
+```python
+with gpu_measurement_context(device_id=0) as monitor:
+    run_workload()
+samples = monitor.get_samples()
+```
+
+**Lifecycle guarantees:**
+- `stop()` is called in a `finally` block — the thread stops even on exception.
+- `stop()` is idempotent — calling it multiple times is safe.
+- Background thread is a daemon — it will not prevent process exit.
+- Thread is joined with a 5-second timeout to prevent indefinite blocking.
+
+---
+
+### 10. Sampling Interval
+
+Default: **0.5 seconds** (documented).
+
+- Conservative enough to avoid significant monitoring overhead.
+- Configurable: `GPUMonitor(device_id=0, sample_interval=0.1)`.
+- Step 5.5 may override this value.
+- Do NOT hard-code a lower interval without measuring overhead impact.
+
+> [!NOTE]
+> GPU monitoring itself introduces non-zero overhead. This overhead is **not subtracted** from measurements. To maintain comparability, the same monitoring configuration must be used across all comparable benchmark runs.
+
+---
+
+### 11. GPUSnapshot Schema
+
+Each observation in `List[GPUSnapshot]` (in `adaptive_sr/shared/schemas.py`) contains:
+
+```python
+GPUSnapshot(
+    timestamp                          : str       # ISO-8601 UTC + 'Z'
+    device_id                          : int       # CUDA device index
+    gpu_name                           : str       # hardware name
+    gpu_utilization_percent            : float|None  # NVML device-wide; None if NVML absent
+    memory_utilization_percent         : float|None  # NVML device-wide; None if NVML absent
+    gpu_memory_total_bytes             : int|None    # device-wide total VRAM
+    gpu_memory_free_bytes              : int|None    # device-wide free (NVML only)
+    process_gpu_memory_allocated_bytes : int|None    # process-level (torch allocator)
+    process_gpu_memory_reserved_bytes  : int|None    # process-level (torch allocator)
+    nvml_available                     : bool        # explicit NVML availability flag
+    utilization_source                 : str         # 'nvml' | 'pytorch_allocator' | 'unavailable'
+)
+```
+
+**None semantics:** `None` means genuinely unavailable — not 0, not unmeasured.
+
+---
+
+### 12. Process vs. Device GPU Utilization
+
+NVML provides only **device-level** utilization. It does not identify which process is responsible for the observed utilization.
+
+The benchmark must clearly distinguish:
+- `"GPU utilization of device 0"` (device-wide, all processes)
+- `"GPU utilization caused by this SR process"` (per-process — **not available** from NVML)
+
+`utilization_source="nvml"` documents that device-wide data was used, ensuring this limitation is explicit in every snapshot.
+
+---
+
+### 13. Multi-GPU Support
+
+- `list_gpus()` returns one `GPUDeviceInfo` per visible device.
+- `GPUMonitor(device_id=N)` monitors a specific device (`cuda:0`, `cuda:1`, etc.).
+- `validate_device_id()` rejects requests for non-existent device IDs with explicit messages.
+- Multi-GPU *inference* and load balancing are NOT implemented.
+
+---
+
+### 14. Device Validation
+
+`validate_device_id(device_id)` rejects:
+
+| Input | Error |
+|---|---|
+| Negative ID | `ValueError: GPU device_id must be non-negative` |
+| ID ≥ device count | `RuntimeError: Requested CUDA device N, but only …` |
+| CUDA unavailable | `RuntimeError: CUDA is not available on this host` |
+
+There is **no silent fall-back** to another GPU.
+
+---
+
+### 15. PyTorch Integration
+
+- GPU device state is NOT changed globally.
+- `get_gpu_info(device_id)` and `take_gpu_snapshot(device_id)` query a specific device without altering `torch.cuda.current_device()`.
+- The Step 5.2 adapter remains responsible for model execution.
+- Step 5.4 wraps measurement *around* that execution.
+
+---
+
+### 16. CUDA Asynchronous Execution Note
+
+> [!IMPORTANT]
+> CUDA operations are **asynchronous**: the CPU-side `model()` call may return before the GPU has finished executing.  
+>
+> Therefore, **Step 5.5 MUST call `torch.cuda.synchronize()` around timing boundaries** to ensure the GPU has completed work before recording latency.  
+>
+> Step 5.4 does **not** implement timing and therefore does **not** call `synchronize()`. This is a documented methodological requirement for Step 5.5 implementers.
+
+---
+
+### 17. GPU Warmup Note
+
+> [!NOTE]
+> Future benchmark execution in Step 5.5 MUST distinguish:
+> - CUDA context creation overhead (first CUDA call in the process)
+> - Model weight loading to VRAM
+> - First-inference overhead (JIT compilation, cache misses)
+> - Warmed steady-state inference
+>
+> Step 5.4 provides measurement infrastructure only. Warmup is NOT implemented.
+
+---
+
+### 18. No-GPU Behavior
+
+On a CPU-only machine:
+- `get_cuda_availability()` → `CUDAAvailability.UNAVAILABLE`
+- `list_gpus()` → `[]` (not an error)
+- `GPUMonitor(device_id=0)` → raises `RuntimeError` with a clear message
+- All test suite infrastructure tests pass
+- GPU-specific runtime tests are skipped with `pytest.mark.skipif` and an explicit reason
+
+---
+
+### 19. Limitations
+
+- **NVML is device-wide only.** Per-process GPU utilization is not available via NVML; only per-process memory is available via the PyTorch caching allocator.
+- **Monitoring overhead is not subtracted.** The NVML polling and PyTorch allocator calls introduce non-zero overhead. Run benchmarks with consistent monitoring configurations.
+- **Asynchronous CUDA.** GPU work may still be executing after the CPU call returns. Step 5.5 must handle synchronization.
+- **pynvml deprecation warning.** The currently installed `pynvml==13.0.1` is flagged by PyTorch as deprecated in favour of `nvidia-ml-py`. This warning does not affect functionality for Step 5.4. The dependency should be updated in a future maintenance step.
+
+---
+
+### 20. Automated Tests
+
+Tests in [`tests/test_gpu_measurement.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_gpu_measurement.py) cover all 14 required areas:
+
+| # | Area | GPU Required? |
+|---|---|---|
+| 1 | CUDA availability detection | No (mocked) |
+| 2 | GPU enumeration | No (mocked) |
+| 3 | Device metadata retrieval | Yes (skipped if absent) |
+| 4 | Invalid GPU ID rejection | No |
+| 5 | GPU memory snapshot schema | No |
+| 6 | GPU utilization availability handling | No (mocked) |
+| 7 | Sampling lifecycle | Yes (skipped if absent) |
+| 8 | Sampling interval configuration | Yes (skipped if absent) |
+| 9 | Clean monitor shutdown | Yes (skipped if absent) |
+| 10 | Exception-safe shutdown | Yes (skipped if absent) |
+| 11 | Multi-GPU device selection | No (mocked) |
+| 12 | No-GPU graceful behavior | No |
+| 13 | Step 5.2 CUDA adapter compatibility | No / Yes |
+| 14 | Existing Step 0–4 tests (regression) | No |
+
+**Test design constraints (enforced):**
+- No exact GPU utilization percentage assertions.
+- No exact memory byte value assertions.
+- Structural / range / invariant checks only.
+- No GPU faking or global CUDA monkey-patching.
+
+---
+---
+
+## Step 5.5 — Inference Benchmark Harness
+
+### 1. Purpose & Core Execution Flow
+Step 5.5 converts the execution-control and measurement infrastructure from Steps 5.2–5.4 into a reproducible inference benchmark harness. It isolates model inference from external overheads (such as frame loading and decoding) to accurately characterize model performance across CPU and GPU hardware configurations.
+
+The harness executes the following sequence for each benchmark case:
+1. **Validate Configuration:** Rejects invalid setups (e.g., negative warmup/measured counts, unsupported scales, invalid CPU execution configurations on CUDA).
+2. **Prepare Input:** Retrieves the chunk from the Step 5.1 dataset. If the model is spatial, the first frame is loaded into memory as a single numpy array. If temporal, all frames are loaded into memory as a list of numpy arrays.
+3. **Initialize Adapter:** Initializes the selected model adapter (`FSRCNNAdapter`, `FSRCNNInt8Adapter`, or `RealESRGANAdapter`) on the target device, allocating parameters and threads. This phase is excluded from the steady-state latency measurements.
+4. **Configure Telemetry Context:** Restricts logical CPU affinity and triggers process-level CPU monitoring (on CPU) or initializes GPU monitoring (on CUDA).
+5. **Warm up:** Performs the configured number of warmup executions (default: 3) to absorb JIT compilation, caching, and allocator overhead.
+6. **Steady-State Trials timing:** Executes the trials (default: 20).
+   - If CUDA: Synchronizes before starting the timer, performs inference, and synchronizes before stopping the timer using `torch.cuda.synchronize(device_id)`.
+   - If CPU: Measures elapsed monotonic time directly using `time.perf_counter()`.
+7. **Validate Outputs:** Confirms output shape matches the upscaling scale laws exactly outside the timed inference loop.
+8. **Collect Telemetry:** Aggregates statistics, collects resource snapshots, and cleans up adapter sessions on completion.
+
+---
+
+### 2. Device Policy & Resource Controls
+- **CPU Benchmarks:** Execute inside the `benchmark_execution_context` which binds logical CPU core affinity (`cpu_ids`) and launches the background `BenchmarkProcessMonitor` sampling process-level telemetry.
+- **CUDA Benchmarks:** Execute on a specific GPU device ID (`cuda:N`), ensuring `torch.cuda.synchronize` boundaries are respected. Launch a background `GPUMonitor` sampling device utilization and record synchronous VRAM snapshots (`GPUMeasurementBoundary`) before/after trials.
+- **Oversubscription:** The configuration preserves separate dimensions for logical core count and backend thread pool sizing (`num_threads`), allowing explicit oversubscription studies.
+- **No silent fallback:** Requesting CUDA on a CPU-only environment or requesting invalid scales raises an explicit error at validation time.
+
+---
+
+### 3. Latency Statistics & Percentile Methodology
+The harness collects raw float latencies (in seconds) for each trial and computes:
+- Count
+- Mean, Median, Min, and Max latency
+- Standard deviation
+- p95 latency (using NumPy's deterministic linear percentile interpolation method: `np.percentile(latencies, 95)`)
+
+All statistics are kept at full floating-point precision and are only rounded during human-readable representation.
+
+---
+
+### 4. Throughput & FPS Definition
+Model throughput is defined as:
+$$\text{Throughput (FPS)} = \frac{1}{\text{mean\_latency\_seconds}}$$
+It measures raw inference capacity under sequential execution (batch size = 1) and is mathematically isolated from:
+- Video file decoding
+- Host/Process resource monitoring sampling overhead
+- Serialization and output writing
+- Logging and database activities
+
+---
+
+### 5. Failure Handling & Trials Inspectability
+- Individual trials that encounter runtime exceptions (e.g., CUDA out-of-memory or model failures) are captured gracefully.
+- The harness logs successful vs failed trials and captures error traceback details.
+- Every individual trial's performance latency and memory delta bounds remain inspectable in the resulting dictionary schema (`metadata["trials"]`).
+
+---
+
+### 6. Verification & Automated Tests
+Automated tests in [`tests/test_benchmark_harness.py`](file:///d:/Full%20Stack/AdaptiveSR/tests/test_benchmark_harness.py) cover all functional constraints, verifying:
+- Config schema checks and invalid parameters rejection.
+- Mocked CPU paths with affinity bindings and `ProcessMonitor` lifecycle verification.
+- Mocked GPU paths verifying `torch.cuda.synchronize` and `GPUMonitor` integration.
+- Correct mathematical statistics calculations and percentile method documentation.
+- Graceful skipping of GPU runs in environments without CUDA.
+- Graceful error capturing for single-trial failure.
+- Warmup runs execution and their exclusion from steady-state statistics.
+- Direct integration smoke test with the real lightweight FSRCNN model (`tinysr`) on CPU.
+

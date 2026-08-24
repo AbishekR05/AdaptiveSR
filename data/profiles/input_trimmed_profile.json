@@ -1,0 +1,77 @@
+{
+    "schema_version": "1.0.0",
+    "video_id": "input_trimmed",
+    "source": {
+        "filename": "input_trimmed.mp4",
+        "duration_seconds": 1.0,
+        "fps": 30.0,
+        "width": 640,
+        "height": 480,
+        "frame_count": 30,
+        "codec": "mpeg4",
+        "pixel_format": null,
+        "bitrate": null,
+        "has_audio": false
+    },
+    "profiling_config": {
+        "chunk_duration_seconds": 2.0,
+        "motion_temporal_window_seconds": 0.0333,
+        "aggregation": {
+            "motion": [
+                "mean",
+                "p95",
+                "max"
+            ],
+            "texture": [
+                "mean",
+                "p95"
+            ],
+            "edge_density": [
+                "mean",
+                "p95"
+            ],
+            "blur": [
+                "mean",
+                "p95"
+            ],
+            "complexity": [
+                "mean",
+                "p95",
+                "max"
+            ]
+        }
+    },
+    "chunks": [
+        {
+            "chunk_id": "0000",
+            "start_time_seconds": 0.0,
+            "end_time_seconds": 1.0,
+            "duration_seconds": 1.0,
+            "start_frame": 0,
+            "end_frame": 29,
+            "frame_count": 30,
+            "motion": {
+                "mean": 0.011048709831154685,
+                "p95": 0.012741074346405229,
+                "max": 0.013415134803921569
+            },
+            "texture_density": {
+                "mean": 0.9273894383680557,
+                "p95": 1.0
+            },
+            "edge_density": {
+                "mean": 0.002809244791666667,
+                "p95": 0.0030631510416666667
+            },
+            "blur": {
+                "mean": 1.0,
+                "p95": 1.0
+            },
+            "spatial_complexity": {
+                "mean": 0.4670187456001497,
+                "p95": 0.503694899535335,
+                "max": 0.5037308517156862
+            }
+        }
+    ]
+}
