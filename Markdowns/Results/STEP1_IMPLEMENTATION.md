@@ -1,195 +1,728 @@
-# Step 1 — Video & Content Profiling Implementation
+STEP 1 — VIDEO & CONTENT PROFILING
+IMPLEMENTATION
 
-This document describes the implementation of the source-side offline profiling pipeline (Step 1) for the AdaptiveSR project.
+Step 0 and Step 0.1 are COMPLETE and FROZEN.
 
-The profiler processes a source video offline to extract metadata, assign frames to chunks, analyze spatial and temporal visual characteristics continuously, and export structured content profiles and integrity manifests.
+Step 0:
 
----
+- Cloud → Edge → Client service boundaries
+- Cloud origin
+- Edge cache
+- Client player/buffer emulator
+- telemetry
+- RTT measurement
+- edge identity
 
-## 1. Continuous Source Profiling & Temporal Continuity
+Step 0.1:
 
-In segment-based video analysis, treating each chunk as an independent video causes a systematic loss of temporal context at chunk boundaries. For example, to estimate motion for frame $t$, the system compares it against frame $t - N$. When a segment boundaries reset occurs, the first $N$ frames of every chunk $k$ cannot access context from chunk $k-1$, causing errors and underestimating motion.
+- independent RTT measurements
+- stall duration
+- dual-edge identity validation
+- per-edge cache isolation
+- target/base representation schema groundwork
 
-To resolve this, Step 1 implements a **Continuous Profiling Pass**:
-* The profiler opens the original source video exactly once using OpenCV `cv2.VideoCapture` and parses all frames continuously from beginning to end.
-* The temporal motion comparison state (circular buffer of size $N$) is maintained globally across the entire video.
-* Chunk boundaries do **not** trigger a buffer reset.
-* Only the true beginning of the source video (the first $N$ frames of Chunk 0) lacks prior temporal context. Frame 0 of Chunk $k$ is correctly compared against frame $t-N$ belonging to Chunk $k-1$.
+The foundation has passed 13/13 tests.
 
----
+DO NOT modify the Step 0 architecture unless an absolutely necessary
+interface compatibility change is required. Preserve all existing
+Step 0 tests.
 
-## 2. Dynamic FPS & Constant Temporal Comparison Window
+============================================================
+OBJECTIVE
+============================================================
 
-The temporal motion comparison compares frame $t$ with frame $t - N$. To ensure that motion metrics are comparable across 30, 60, and 120 FPS sources, the comparison frame offset $N$ scales dynamically based on parsed FPS:
-$$N = \max(1, \text{round}(\text{source\_fps} \times \text{motion\_temporal\_window\_seconds}))$$
+Implement ONLY:
 
-By default, the temporal comparison window is configured to `0.0333` seconds ($\approx 1/30\text{ s}$), resulting in:
-* **30 FPS**: $N = 1$ (compare frame $t$ with $t-1$)
-* **60 FPS**: $N = 2$ (compare frame $t$ with $t-2$)
-* **120 FPS**: $N = 4$ (compare frame $t$ with $t-4$)
+    STEP 1 — VIDEO & CONTENT PROFILING
 
-This practical normalization compares frames separated by approximately the same amount of real time.
+The purpose of Step 1 is to create a deterministic, reproducible,
+SOURCE-SIDE profiling pipeline that analyzes an input video and
+produces:
 
----
+    1. video-level metadata
+    2. deterministic chunk boundaries
+    3. chunk-level source-content features
+    4. a persisted profiling dataset
+    5. a manifest/integrity record
 
-## 3. Timestamp-Based Chunk Bucketing & Frame-Consistency Validation
+This profiling occurs BEFORE live adaptive streaming decisions.
 
-After calculating per-frame metrics continuously, frames are mapped to their corresponding chunk boundaries using **Timestamp-Based/Frame Offset Bucketing**:
-1. We segment the video physically first using FFmpeg copy segmenting.
-2. We query each generated chunk file using OpenCV to discover its exact frame count and duration.
-3. This creates a list of deterministic start/end frame boundaries for each chunk.
-4. During the continuous profiling pass, a frame at index `idx` is assigned to chunk $k$ if:
-   $$\text{start\_frame}_k \le \text{idx} \le \text{end\_frame}_k$$
-5. Chunk aggregations are performed on the bucketed frame metrics belonging to that chunk. This ensures every frame belongs to exactly one chunk.
+The output of Step 1 will later be consumed by the chunk,
+network, SR, and adaptive scheduling stages.
 
-### Invariant Frame-Consistency Validations
-To guarantee that the continuous analysis path matches the physical chunking path, the profiler enforces the following strict runtime invariants before exporting profiles:
-* **Total Frame Count Matches**: The continuous profiling frame count must equal the sum of the frame counts of all physical chunks:
-  $$\text{continuous\_frame\_count} == \sum \text{physical\_chunk.frame\_count}$$
-* **No Overlaps**: Chunk frame ranges must not overlap.
-* **No Gaps**: Chunk frame ranges must have no gaps (the start frame of chunk $k+1$ must equal `end_frame` of chunk $k$ plus 1).
-* **Boundary Validation**: The first chunk starts at frame 0 and the final chunk ends at `continuous_frame_count - 1`.
-* **Universal Coverage**: Every continuous frame index is assigned to exactly one chunk.
+============================================================
+SUPPORTED INPUT
+============================================================
 
-If any invariant is violated, the profiler raises a descriptive `RuntimeError` reporting the mismatch details.
+The profiler MUST support source videos with:
 
----
+    30 FPS
+    60 FPS
+    120 FPS
 
-## 4. Target vs. Actual Chunk Duration (Hard Contract)
+Do NOT hardcode 30 FPS assumptions.
 
-Step 1 establishes a strict distinction between requested and actual segment metrics:
-* **`target_chunk_duration_seconds`**: The requested configuration target (e.g., `2.0` seconds).
-* **`chunk.duration_seconds`**: The **actual** logical profiling duration of that specific chunk.
+All frame/time calculations must derive from the actual FPS parsed
+from the source video.
 
-Because copy-codec FFmpeg (`-c copy`) segmenting must split videos at keyframe boundaries (IDR frames) to avoid re-encoding latency, chunk durations will vary slightly depending on keyframe distribution:
-* Chunk 0000: `2.000` s
-* Chunk 0001: `2.033` s
-* Chunk 0002: `1.967` s
+For a default 2-second chunk:
 
-**Downstream consumers (buffer evolution calculators, transmission deadlines, and bitrate allocators) MUST use the per-chunk actual duration** (`chunk.duration_seconds`) rather than assuming a static target duration.
+    30 FPS  → approximately 60 frames
+    60 FPS  → approximately 120 frames
+    120 FPS → approximately 240 frames
 
----
+Use actual parsed FPS and timestamps rather than hardcoded frame
+counts.
 
-## 5. Reused & Adapted Legacy Components
+============================================================
+ARCHITECTURAL PRINCIPLE
+============================================================
 
-* **`VideoLoader`** ([`src/modules/video_loader.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/video_loader.py)): Reused to extract input metadata and inspect generated chunks.
-* **`FrameExtractor`** ([`src/modules/frame_extractor.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/frame_extractor.py)): Reused to load frames sequentially.
-* **`analyze_frame`** ([`src/modules/scene_analyzer.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/scene_analyzer.py)): Extracted visual metrics (edges, texture, blur clarity).
-* **`estimate_complexity`** ([`src/modules/complexity_estimator.py`](file:///d:/Full%20Stack/AdaptiveSR/src/modules/complexity_estimator.py)): Reused to calculate spatial complexity.
+The profiler is an OFFLINE / SOURCE-SIDE preprocessing stage.
 
----
+It does NOT have a real-time 8.3 ms/frame deadline.
 
-## 6. Aggregation Rules
+Do NOT optimize away accurate profiling merely to satisfy a
+runtime streaming FPS budget.
 
-* **Motion**: `mean`, `p95` (95th percentile), and `max`.
-* **Spatial Complexity**: `mean`, `p95`, and `max`.
-* **Texture Density**: `mean` and `p95`.
-* **Edge Density**: `mean` and `p95`.
-* **Blur / Clarity**: `mean` and `p95`.
+The 8.3 ms/frame constraint applies to future runtime processing
+of 120 FPS content, particularly SR/inference, not to this
+offline profiling pass.
 
-Aggregations are computed using `numpy.percentile` for numerical correctness.
+Accuracy and reproducibility are more important than profiler
+throughput at this stage.
 
----
+============================================================
+REUSE LEGACY COMPONENTS
+============================================================
 
-## 7. Dataset Schema & Manifest Structure
+Reuse the legacy components identified by the Step 1 audit where
+appropriate:
 
-### Content Profile JSON (`data/profiles/{video_id}_profile.json`)
-```json
-{
-    "schema_version": "1.0.0",
-    "video_id": "sample",
-    "source": {
-        "filename": "sample.mp4",
-        "duration_seconds": 6.0,
-        "fps": 30.0,
-        "width": 640,
-        "height": 480,
-        "frame_count": 180,
-        "codec": "h264",
-        "pixel_format": null,
-        "bitrate": null,
-        "has_audio": false
-    },
-    "profiling_config": {
-        "target_chunk_duration_seconds": 2.0,
-        "motion_temporal_window_seconds": 0.0333,
-        "aggregation": {
-            "motion": ["mean", "p95", "max"],
-            "texture": ["mean", "p95"],
-            "edge_density": ["mean", "p95"],
-            "blur": ["mean", "p95"],
-            "complexity": ["mean", "p95", "max"]
-        }
-    },
-    "chunks": [
-        {
-            "chunk_id": "0000",
-            "start_time_seconds": 0.0,
-            "end_time_seconds": 2.0,
-            "duration_seconds": 2.0,
-            "start_frame": 0,
-            "end_frame": 59,
-            "frame_count": 60,
-            "motion": { "mean": 0.12, "p95": 0.18, "max": 0.22 },
-            "texture_density": { "mean": 0.35, "p95": 0.42 },
-            "edge_density": { "mean": 0.08, "p95": 0.11 },
-            "blur": { "mean": 0.85, "p95": 0.90 },
-            "spatial_complexity": { "mean": 0.28, "p95": 0.33, "max": 0.38 }
-        }
-    ]
-}
-```
+    src/modules/video_loader.py
+        VideoLoader
 
-### Integrity Manifest JSON (`data/manifests/{video_id}_manifest.json`)
-```json
-{
-    "schema_version": "1.0.0",
-    "video_id": "sample",
-    "source_file_path": "/absolute/path/to/sample.mp4",
-    "source_file_hash": "sha256_hash_here",
-    "generated_profile_path": "/absolute/path/to/sample_profile.json",
-    "chunks": [
-        {
-            "chunk_id": "0000",
-            "file_path": "chunks/sample_0000.mp4",
-            "file_hash": "sha256_hash_here"
-        }
-    ]
-}
-```
+    src/modules/frame_extractor.py
+        FrameExtractor
 
----
+    src/modules/scene_analyzer.py
+        analyze_frame
 
-## 8. Data Leakage Rules
+    src/modules/complexity_estimator.py
+        estimate_complexity
 
-The source profiler is **strictly prohibited** from referencing output quality metrics (PSNR, SSIM, LPIPS, VMAF) or Edge runtime load metrics (telemetry, RTT, cache hit status). These are deferred to later evaluation stages.
+Do NOT blindly copy their old behavior.
 
----
+Modify/adapt them only where required to satisfy the Step 1
+contract below.
 
-## 9. CLI Usage
+Do NOT reuse the old runtime DecisionEngine, EnhancementEngine,
+DeviceMonitor, or VideoEncoder as part of Step 1.
 
-```powershell
-python -m adaptive_sr.profiling.profile_video \
-    --input benchmark_data/mixed_lr.mp4 \
-    --output ./data \
+Do NOT modify the legacy components unless necessary for the new
+Step 1 implementation. Prefer creating/adapting Step 1-specific
+wrappers/modules where that keeps the Step 0 architecture clean.
+
+============================================================
+STEP 1 PIPELINE
+============================================================
+
+Implement:
+
+    SOURCE VIDEO
+        ↓
+    Video Metadata Extraction
+        ↓
+    Deterministic Chunking
+        ↓
+    Frame/Temporal Analysis
+        ↓
+    Spatial/Content Analysis
+        ↓
+    Chunk Aggregation
+        ↓
+    Profile Dataset Export
+        ↓
+    Manifest / Integrity Metadata
+
+============================================================
+
+1. # VIDEO METADATA
+
+Extract and persist at minimum:
+
+    video_id
+    source filename
+    duration_seconds
+    source_fps
+    width
+    height
+    frame_count
+    codec
+    pixel format, if available
+    source bitrate, if available
+    audio presence
+
+Do not fabricate values when FFprobe/OpenCV cannot provide them.
+
+Use null/None where appropriate.
+
+============================================================ 2. DETERMINISTIC CHUNKING
+============================================================
+
+Implement a deterministic source-side chunker.
+
+Default:
+
+    chunk_duration_seconds = 2.0
+
+Make chunk duration configurable.
+
+Example:
+
     --chunk-duration 2.0
-```
 
----
+Do not hardcode the chunk duration internally.
 
-## 10. Automated Tests
+For every chunk, persist:
 
-Run tests using:
-```powershell
-python -m pytest tests/test_foundation.py tests/test_profiling.py -v
-```
+    chunk_id
+    start_time_seconds
+    end_time_seconds
+    duration_seconds
+    start_frame
+    end_frame
+    frame_count
 
-This verifies:
+Frame boundaries MUST be derived from actual source FPS/timestamps.
+
+Do not assume:
+
+    60 frames = one chunk
+
+because that fails for 60/120 FPS content.
+
+The chunking process must be deterministic:
+
+    same source
+    same chunk duration
+        ↓
+    same chunk boundaries
+
+If FFmpeg is used for physical segment generation, ensure the
+metadata index and generated files correspond deterministically.
+
+============================================================ 3. MOTION FEATURE
+============================================================
+
+The legacy implementation calculates motion from frame-to-frame
+pixel differences.
+
+Do NOT use the legacy static:
+
+    MOTION_SCALE_FACTOR = 4.0
+
+as the primary correction for higher FPS.
+
+Do NOT simply multiply motion by:
+
+    FPS / 30
+
+as the primary implementation.
+
+Instead, implement a constant temporal comparison interval.
+
+Conceptually:
+
+    30 FPS:
+        compare approximately t with t - 1/30 s
+
+    60 FPS:
+        compare approximately t with t - 1/30 s
+
+    120 FPS:
+        compare approximately t with t - 1/30 s
+
+Therefore the comparison frame offset should be derived from the
+actual FPS.
+
+For example:
+
+    temporal_window_frames ≈ round(source_fps / 30)
+
+with appropriate handling of boundaries.
+
+The purpose is to compare frames separated by approximately the
+same amount of real time across 30/60/120 FPS sources.
+
+Document this assumption.
+
+IMPORTANT:
+
+This is a practical normalization strategy, not a claim that
+motion is perfectly FPS-invariant.
+
+The implementation should make the temporal comparison window
+configurable so it can be empirically evaluated later.
+
+============================================================ 4. SPATIAL / CONTENT FEATURES
+============================================================
+
+Carry forward the following source-side features identified in
+the audit:
+
+    motion
+    texture density
+    edge density
+    blur / clarity
+    spatial complexity
+
+Use the existing scene-analysis logic where appropriate.
+
+Definitions should remain consistent with the legacy implementation
+unless modification is necessary for FPS/chunk compatibility.
+
+The features MUST be computed only from raw source frames.
+
+============================================================ 5. CHUNK AGGREGATION
+============================================================
+
+Do NOT store only one mean value per feature.
+
+At minimum implement the following aggregation policy:
+
+    Motion:
+        mean
+        p95
+        max
+
+    Texture density:
+        mean
+        p95
+
+    Edge density:
+        mean
+        p95
+
+    Blur / clarity:
+        mean
+        p95
+
+    Spatial complexity:
+        mean
+        p95
+        max
+
+Use a numerically correct percentile implementation.
+
+Document the aggregation policy.
+
+The purpose of retaining percentile/max statistics is to preserve
+short high-complexity or high-motion events that could disappear
+when only a mean is retained.
+
+Do NOT invent additional features merely to make the dataset larger.
+
+============================================================ 6. COMPLEXITY
+============================================================
+
+Reuse the legacy complexity calculation where appropriate.
+
+The existing complexity estimator produces a weighted visual
+complexity score.
+
+Adapt it so that frame-level scores can be aggregated into the
+chunk-level statistics specified above.
+
+Do NOT make the complexity score depend on:
+
+    network state
+    edge state
+    SR output
+    bitrate decisions
+    future playback outcomes
+
+============================================================ 7. SCENE CHANGE
+============================================================
+
+If the existing scene-analysis implementation already provides a
+valid scene-change signal, audit whether it can be safely included.
+
+Do NOT invent a new scene-change algorithm unless the existing
+implementation requires it for the Step 1 contract.
+
+If a reliable scene-change score cannot be implemented without
+introducing unnecessary complexity, leave it out and explicitly
+document that it is deferred.
+
+Do not fabricate scene-change values.
+
+============================================================ 8. FPS HANDLING
+============================================================
+
+Explicitly test the profiler with:
+
+    30 FPS input
+    60 FPS input
+    120 FPS input
+
+Verify:
+
+    source_fps is detected correctly
+    chunk duration remains approximately constant in seconds
+    frame counts scale appropriately
+    temporal comparison offsets scale appropriately
+    no hardcoded 30-FPS frame assumptions remain
+
+For a 2-second chunk, the profiler should approximately observe:
+
+    30 FPS → 60 frames
+    60 FPS → 120 frames
+    120 FPS → 240 frames
+
+allowing for actual container/timestamp behavior.
+
+============================================================ 9. PROFILE DATASET FORMAT
+============================================================
+
+Create a clean persisted profiling dataset.
+
+Use JSON unless the existing project structure provides a strong
+reason to use another format.
+
+Separate:
+
+    CONTENT PROFILE
+
+from:
+FILE/INTEGRITY MANIFEST
+
+Do NOT put file hashes into the content feature object itself.
+
+Conceptual profile structure:
+
+{
+"schema_version": "...",
+"video_id": "...",
+"source": {
+"filename": "...",
+"duration_seconds": ...,
+"fps": ...,
+"width": ...,
+"height": ...,
+"frame_count": ...,
+"codec": "...",
+"pixel_format": "...",
+"bitrate": ...,
+"has_audio": ...
+},
+"profiling_config": {
+"chunk_duration_seconds": 2.0,
+"motion_temporal_window_seconds": ...,
+"aggregation": {
+"motion": ["mean", "p95", "max"],
+"texture": ["mean", "p95"],
+"edge_density": ["mean", "p95"],
+"blur": ["mean", "p95"],
+"complexity": ["mean", "p95", "max"]
+}
+},
+"chunks": [
+{
+"chunk_id": "0000",
+"start_time_seconds": ...,
+"end_time_seconds": ...,
+"duration_seconds": ...,
+"start_frame": ...,
+"end_frame": ...,
+"frame_count": ...,
+
+            "motion": {
+                "mean": ...,
+                "p95": ...,
+                "max": ...
+            },
+
+            "texture_density": {
+                "mean": ...,
+                "p95": ...
+            },
+
+            "edge_density": {
+                "mean": ...,
+                "p95": ...
+            },
+
+            "blur": {
+                "mean": ...,
+                "p95": ...
+            },
+
+            "spatial_complexity": {
+                "mean": ...,
+                "p95": ...,
+                "max": ...
+            }
+        }
+    ]
+
+}
+
+This is the conceptual contract. Adjust field naming to match
+existing project conventions where appropriate, but preserve the
+semantics.
+
+============================================================ 10. MANIFEST / INTEGRITY DATA
+============================================================
+
+Create a separate manifest containing reproducibility/integrity
+information such as:
+
+    video_id
+    source file hash
+    generated profile path
+    generated chunk paths
+    chunk hashes, if physical chunk files are generated
+    profiler version/schema version
+
+Hashes belong here, NOT in the content feature structure.
+
+============================================================ 11. DATA LEAKAGE RULE
+============================================================
+
+THIS IS A HARD CONSTRAINT.
+
+Step 1 source profiling MUST NOT use:
+
+    PSNR
+    SSIM
+    LPIPS
+    VMAF
+    SR output quality
+    post-SR frames
+    edge processing time
+    network throughput
+    RTT
+    cache state
+    future playback outcome
+    future stall information
+    future scheduler decisions
+
+These may be used in later evaluation/runtime stages.
+
+In particular:
+
+    VMAF is a valid later QoE/output-quality metric,
+    but MUST NOT become a source-side profiling feature.
+
+============================================================ 12. OUTPUT LOCATION
+============================================================
+
+Keep Step 1 data separate from Step 0 runtime state.
+
+Use a clear structure such as:
+
+    data/
+        profiles/
+        chunks/
+        manifests/
+
+or an equivalent clean project structure.
+
+Do not mix profiling artifacts with the Edge cache.
+
+Do not place profiling metadata inside runtime telemetry.
+
+============================================================ 13. CLI
+============================================================
+
+Provide a reproducible CLI entry point.
+
+Example:
+
+    python -m adaptive_sr.profiling.profile_video \
+        --input <video> \
+        --output <output-directory> \
+        --chunk-duration 2.0
+
+If a different module path is more consistent with the current
+project structure, use that instead.
+
+The CLI must expose at least:
+
+    input video
+    output directory
+    chunk duration
+
+If useful, also expose:
+
+    motion temporal window
+
+Do not expose unnecessary tuning parameters yet.
+
+============================================================ 14. TESTING
+============================================================
+
+Add automated tests for:
+
 1. Video metadata extraction.
+
 2. Deterministic chunk boundaries.
-3. 30/60/120 FPS frame counts and comparison offsets.
-4. Numerical percentile aggregation.
-5. Repeatability and schema completeness.
-6. Temporal continuity across segment boundaries.
-7. Insulated data-leakage protection.
-8. Robust Frame-Consistency Validation checks (total frames, gaps, overlaps, starting/ending boundaries, and RuntimeError raising on mismatch).
+
+3. 30 FPS chunk frame count/timing.
+
+4. 60 FPS chunk frame count/timing.
+
+5. 120 FPS chunk frame count/timing.
+
+6. Motion temporal comparison offset:
+   30 FPS → approximately 1 frame
+   60 FPS → approximately 2 frames
+   120 FPS → approximately 4 frames
+
+7. Chunk aggregation:
+   mean
+   p95
+   max
+
+8. Profile JSON schema/required fields.
+
+9. Repeatability:
+   same input + same configuration
+   → same profile metadata/chunk boundaries.
+
+10. Data-leakage protection:
+    profile generation must not depend on
+    PSNR/SSIM/LPIPS/VMAF/network/runtime telemetry.
+
+11. Existing Step 0/0.1 tests must continue to pass.
+
+Use synthetic test videos where practical.
+
+For FPS tests, create or use deterministic test footage at:
+
+    30 FPS
+    60 FPS
+    120 FPS
+
+Do not rely solely on one arbitrary real-world video.
+
+============================================================ 15. EMPIRICAL MOTION VALIDATION
+============================================================
+
+Do NOT claim that the constant temporal-window normalization
+makes motion perfectly comparable across FPS.
+
+Add a small validation report/test fixture demonstrating the
+behavior across 30/60/120 FPS synthetic footage.
+
+The objective is to confirm that the implementation behaves
+sensibly, not to prove a universal motion-invariance theorem.
+
+If results reveal unexpected behavior, report it instead of
+silently compensating with another arbitrary multiplier.
+
+============================================================ 16. DOCUMENTATION
+============================================================
+
+Create:
+
+    STEP1_IMPLEMENTATION.md
+
+Document:
+
+    purpose
+    architecture
+    reused legacy components
+    modified components
+    chunking strategy
+    FPS handling
+    motion temporal-window strategy
+    feature definitions
+    aggregation rules
+    dataset schema
+    manifest structure
+    data-leakage rules
+    CLI usage
+    tests
+    known limitations
+    future dependencies
+
+Explicitly state:
+
+    Step 1 is offline/source-side profiling.
+
+Explicitly state:
+
+    Step 1 does not perform SR, ABR, adaptive FPS,
+    resource allocation, ML, online learning, or scheduling.
+
+============================================================ 17. STRICT NON-GOALS
+============================================================
+
+DO NOT implement:
+
+    Super-resolution
+    FSRCNN
+    Real-ESRGAN
+    BasicVSR++
+    SR model benchmarking
+    ABR
+    adaptive bitrate
+    adaptive FPS
+    CPU allocation
+    GPU allocation
+    VRAM allocation
+    online learning
+    ML decision engine
+    multi-edge scheduling
+    multi-cluster scheduling
+    network emulation
+    Azure deployment
+    concurrent streaming prefetch
+    QoE optimization
+    VMAF-based decisions
+
+Those belong to later steps.
+
+============================================================ 18. LEGACY CODE SAFETY
+============================================================
+
+The Step 0/0.1 service architecture is frozen.
+
+Do not rewrite it.
+
+Do not move Cloud/Edge/Client services.
+
+Do not alter the Edge cache implementation.
+
+Do not alter telemetry semantics unless Step 1 genuinely requires
+a new schema field, and if it does, document the reason.
+
+The legacy `src/` implementation should remain usable for reference
+and should not be destructively rewritten.
+
+============================================================ 19. FINAL REPORT
+============================================================
+
+When implementation is complete, report:
+
+1. Files created.
+2. Files modified.
+3. Legacy components reused.
+4. Legacy components left untouched.
+5. CLI command.
+6. Example output profile.
+7. Example manifest.
+8. 30 FPS test result.
+9. 60 FPS test result.
+10. 120 FPS test result.
+11. Motion temporal-window validation result.
+12. Aggregation test result.
+13. Full test-suite result.
+14. Confirmation that Step 0/0.1 tests still pass.
+15. Known limitations.
+
+STOP after Step 1.
+
+Do NOT automatically begin Step 2.
