@@ -1,0 +1,160 @@
+{
+    "schema_version": "1.0.0",
+    "dataset_schema_version": "1.0.0",
+    "generator_version": "1.0.0",
+    "dataset_id": "benchmark_layer_b_v1",
+    "created_at": "2026-08-26T02:35:22.939801Z",
+    "config": {
+        "target_chunk_duration_seconds": 2.0,
+        "seed": 42,
+        "duration_seconds": 4.0,
+        "width": 1280,
+        "height": 720
+    },
+    "videos": [
+        {
+            "benchmark_video_id": "clip_001_lowmotion_30fps",
+            "filename": "clip_001_lowmotion_30fps.mp4",
+            "file_path": "videos\\layer_b\\clip_001_lowmotion_30fps.mp4",
+            "file_hash": "ea312ae83a05980b5143a64470c6b1797dfe12d510dc34b0dca675e40a0b3293",
+            "content_case": "lowmotion",
+            "source_fps": 30.0,
+            "width": 1280,
+            "height": 720,
+            "duration_seconds": 4.0,
+            "frame_count": 120,
+            "codec": "mpeg4",
+            "pixel_format": "yuv420p",
+            "source_bitrate": null,
+            "audio_presence": false,
+            "profile_path": "profiles\\clip_001_lowmotion_30fps_profile.json",
+            "gt_crop_applied": false,
+            "gt_h_before": 720,
+            "gt_w_before": 1280,
+            "downsampling": {
+                "interpolation": "cubic",
+                "scale": 2
+            },
+            "chunks": [
+                {
+                    "chunk_id": "0000",
+                    "file_path": "chunks\\clip_001_lowmotion_30fps_0000.mp4",
+                    "file_hash": "28d60c8adeb80b321033480b7045b3195257e7efe3bf403cb4beb24fe5a2d261",
+                    "start_time_seconds": 0.0,
+                    "end_time_seconds": 2.0,
+                    "duration_seconds": 2.0,
+                    "start_frame": 0,
+                    "end_frame": 59,
+                    "frame_count": 60
+                },
+                {
+                    "chunk_id": "0001",
+                    "file_path": "chunks\\clip_001_lowmotion_30fps_0001.mp4",
+                    "file_hash": "57415a823f040ba77a5744211f6473239fe04a7715988f96b1bcdc0536f91cfe",
+                    "start_time_seconds": 2.0,
+                    "end_time_seconds": 4.0,
+                    "duration_seconds": 2.0,
+                    "start_frame": 60,
+                    "end_frame": 119,
+                    "frame_count": 60
+                }
+            ]
+        },
+        {
+            "benchmark_video_id": "clip_002_moderatemotion_30fps",
+            "filename": "clip_002_moderatemotion_30fps.mp4",
+            "file_path": "videos\\layer_b\\clip_002_moderatemotion_30fps.mp4",
+            "file_hash": "f758dd280a921cde4df9e22a8cc05955dbf7f01226c65a3663a2be74819816f0",
+            "content_case": "moderatemotion",
+            "source_fps": 30.0,
+            "width": 1280,
+            "height": 720,
+            "duration_seconds": 4.0,
+            "frame_count": 120,
+            "codec": "mpeg4",
+            "pixel_format": "yuv420p",
+            "source_bitrate": null,
+            "audio_presence": false,
+            "profile_path": "profiles\\clip_002_moderatemotion_30fps_profile.json",
+            "gt_crop_applied": false,
+            "gt_h_before": 720,
+            "gt_w_before": 1280,
+            "downsampling": {
+                "interpolation": "cubic",
+                "scale": 2
+            },
+            "chunks": [
+                {
+                    "chunk_id": "0000",
+                    "file_path": "chunks\\clip_002_moderatemotion_30fps_0000.mp4",
+                    "file_hash": "e99ec2f753ac76290d24c9df71fe1bce9feea61bac01ed4a352adda9bf8aa1cc",
+                    "start_time_seconds": 0.0,
+                    "end_time_seconds": 2.0,
+                    "duration_seconds": 2.0,
+                    "start_frame": 0,
+                    "end_frame": 59,
+                    "frame_count": 60
+                },
+                {
+                    "chunk_id": "0001",
+                    "file_path": "chunks\\clip_002_moderatemotion_30fps_0001.mp4",
+                    "file_hash": "9f2cc8e25c720d95660fb6d5ad2976864a26bb430a6eb3c045b676fd094c9c12",
+                    "start_time_seconds": 2.0,
+                    "end_time_seconds": 4.0,
+                    "duration_seconds": 2.0,
+                    "start_frame": 60,
+                    "end_frame": 119,
+                    "frame_count": 60
+                }
+            ]
+        },
+        {
+            "benchmark_video_id": "clip_003_highmotion_30fps",
+            "filename": "clip_003_highmotion_30fps.mp4",
+            "file_path": "videos\\layer_b\\clip_003_highmotion_30fps.mp4",
+            "file_hash": "6c056eed895e79e974a432a8cd63211b388deb50b3156374d76c7980a63e4e09",
+            "content_case": "highmotion",
+            "source_fps": 30.0,
+            "width": 1280,
+            "height": 720,
+            "duration_seconds": 4.0,
+            "frame_count": 120,
+            "codec": "mpeg4",
+            "pixel_format": "yuv420p",
+            "source_bitrate": null,
+            "audio_presence": false,
+            "profile_path": "profiles\\clip_003_highmotion_30fps_profile.json",
+            "gt_crop_applied": false,
+            "gt_h_before": 720,
+            "gt_w_before": 1280,
+            "downsampling": {
+                "interpolation": "cubic",
+                "scale": 2
+            },
+            "chunks": [
+                {
+                    "chunk_id": "0000",
+                    "file_path": "chunks\\clip_003_highmotion_30fps_0000.mp4",
+                    "file_hash": "1ecc176a3656e0119d98ed3dee8bc8b862b13c7c131974af2ed6e306e89b8625",
+                    "start_time_seconds": 0.0,
+                    "end_time_seconds": 2.0,
+                    "duration_seconds": 2.0,
+                    "start_frame": 0,
+                    "end_frame": 59,
+                    "frame_count": 60
+                },
+                {
+                    "chunk_id": "0001",
+                    "file_path": "chunks\\clip_003_highmotion_30fps_0001.mp4",
+                    "file_hash": "eb8c5beb0bb45e80a3b82163df011767bf67d91db7917e48eacd9fb85f3dd683",
+                    "start_time_seconds": 2.0,
+                    "end_time_seconds": 4.0,
+                    "duration_seconds": 2.0,
+                    "start_frame": 60,
+                    "end_frame": 119,
+                    "frame_count": 60
+                }
+            ]
+        }
+    ]
+}

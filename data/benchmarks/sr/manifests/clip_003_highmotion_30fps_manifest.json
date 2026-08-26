@@ -1,0 +1,19 @@
+{
+    "schema_version": "1.0.0",
+    "video_id": "clip_003_highmotion_30fps",
+    "source_file_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\videos\\layer_b\\clip_003_highmotion_30fps.mp4",
+    "source_file_hash": "6c056eed895e79e974a432a8cd63211b388deb50b3156374d76c7980a63e4e09",
+    "generated_profile_path": "D:\\Full Stack\\AdaptiveSR\\data\\benchmarks\\sr\\profiles\\clip_003_highmotion_30fps_profile.json",
+    "chunks": [
+        {
+            "chunk_id": "0000",
+            "file_path": "chunks\\clip_003_highmotion_30fps_0000.mp4",
+            "file_hash": "1ecc176a3656e0119d98ed3dee8bc8b862b13c7c131974af2ed6e306e89b8625"
+        },
+        {
+            "chunk_id": "0001",
+            "file_path": "chunks\\clip_003_highmotion_30fps_0001.mp4",
+            "file_hash": "eb8c5beb0bb45e80a3b82163df011767bf67d91db7917e48eacd9fb85f3dd683"
+        }
+    ]
+}

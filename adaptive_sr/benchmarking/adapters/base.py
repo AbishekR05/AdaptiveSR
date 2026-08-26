@@ -254,6 +254,10 @@ class BaseSRAdapter(ABC):
     def get_last_inference_metadata(self) -> Dict[str, Any]:
         """Retrieves dynamic metadata regarding the most recent inference execution,
         such as cropping parameters.
+
+        C2 (Hardening Pass 2): Fields are always present — crop_pixels_width and
+        crop_pixels_height are 0 when no crop occurred, never None/absent.
+        The legacy 'crop_pixels_if_available' naming is dropped.
         """
         return {
             "crop_applied": False,
@@ -261,7 +265,10 @@ class BaseSRAdapter(ABC):
             "pre_crop_height": None,
             "final_width": None,
             "final_height": None,
-            "crop_pixels": None
+            "crop_pixels_width": 0,      # always 0 when no crop (C2: never absent)
+            "crop_pixels_height": 0,     # always 0 when no crop (C2: never absent)
+            "crop_within_tolerance": True,
+            "crop_tolerance_px": 8,
         }
 
 

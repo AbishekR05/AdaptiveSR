@@ -1,0 +1,207 @@
+{
+    "metadata": {
+        "timestamp": "2026-08-26T04:11:57.782450Z",
+        "skimage_version": "0.26.0",
+        "vmaf_supported": true
+    },
+    "records": [
+        {
+            "model_id": "tinysr",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_001_lowmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 34.3329101793125,
+            "ssim_mean": 0.971539178760191,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 3,
+            "device": "cuda",
+            "clip_id": "clip_001_lowmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 25.32827768958274,
+            "ssim_mean": 0.888113504868986,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 4,
+            "device": "cuda",
+            "clip_id": "clip_001_lowmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 34.05859735649427,
+            "ssim_mean": 0.9667837523133596,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr_int8",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_001_lowmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 34.528309350919486,
+            "ssim_mean": 0.9666692804898254,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "real_esrgan",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_001_lowmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 28.088325608547265,
+            "ssim_mean": 0.7531796950151652,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "real_esrgan",
+            "scale": 4,
+            "device": "cuda",
+            "clip_id": "clip_001_lowmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 21.95315032951357,
+            "ssim_mean": 0.4829032334720893,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_002_moderatemotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 31.902238126917112,
+            "ssim_mean": 0.9601900063420838,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 3,
+            "device": "cuda",
+            "clip_id": "clip_002_moderatemotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 22.16553821487112,
+            "ssim_mean": 0.8092735890369581,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 4,
+            "device": "cuda",
+            "clip_id": "clip_002_moderatemotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 30.938165828550247,
+            "ssim_mean": 0.9452860560432973,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr_int8",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_002_moderatemotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 31.693635888064833,
+            "ssim_mean": 0.9539701797680946,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "real_esrgan",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_002_moderatemotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 17.542026593430798,
+            "ssim_mean": 0.2546356243115107,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "real_esrgan",
+            "scale": 4,
+            "device": "cuda",
+            "clip_id": "clip_002_moderatemotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 26.790942680261953,
+            "ssim_mean": 0.5122058548888053,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_003_highmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 29.991798117609633,
+            "ssim_mean": 0.9469386287349932,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 3,
+            "device": "cuda",
+            "clip_id": "clip_003_highmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 27.969519024100038,
+            "ssim_mean": 0.9065134383358027,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr",
+            "scale": 4,
+            "device": "cuda",
+            "clip_id": "clip_003_highmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 25.87167043754752,
+            "ssim_mean": 0.8946447286608841,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "tinysr_int8",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_003_highmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 29.573539711192,
+            "ssim_mean": 0.9353160302642793,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "real_esrgan",
+            "scale": 2,
+            "device": "cuda",
+            "clip_id": "clip_003_highmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 22.41663610718423,
+            "ssim_mean": 0.45379524497649787,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        },
+        {
+            "model_id": "real_esrgan",
+            "scale": 4,
+            "device": "cuda",
+            "clip_id": "clip_003_highmotion_30fps",
+            "chunk_count": 2,
+            "psnr_mean": 33.91539837861958,
+            "ssim_mean": 0.881748923262809,
+            "vmaf_mean": null,
+            "vmaf_unavailable": true
+        }
+    ]
+}

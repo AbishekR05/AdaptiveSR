@@ -44,7 +44,10 @@ class RealESRGANAdapter(BaseSRAdapter):
             "pre_crop_height": None,
             "final_width": None,
             "final_height": None,
-            "crop_pixels_if_available": None
+            "crop_pixels_width": 0,      # always 0 when no crop (C2: never absent)
+            "crop_pixels_height": 0,     # always 0 when no crop (C2: never absent)
+            "crop_within_tolerance": True,
+            "crop_tolerance_px": 8,
         }
 
     @property
@@ -130,7 +133,10 @@ class RealESRGANAdapter(BaseSRAdapter):
             "pre_crop_height": None,
             "final_width": None,
             "final_height": None,
-            "crop_pixels": None
+            "crop_pixels_width": 0,      # C2: always 0 when no crop, never absent
+            "crop_pixels_height": 0,     # C2: always 0 when no crop, never absent
+            "crop_within_tolerance": True,
+            "crop_tolerance_px": 8,
         }
 
         enhanced_frames = []
@@ -159,16 +165,24 @@ class RealESRGANAdapter(BaseSRAdapter):
                     f"Maximum allowable boundary padding is {CROP_THRESHOLD_PX}px."
                 )
 
+            crop_tolerance_px = 8
+            crop_pixels_width = max(0, w_out - expected_w)
+            crop_pixels_height = max(0, h_out - expected_h)
+            # C2: crop_within_tolerance is a structural bool gate, not just an observation
+            crop_within_tolerance = (crop_pixels_width <= crop_tolerance_px) and (crop_pixels_height <= crop_tolerance_px)
+
             if h_out != expected_h or w_out != expected_w:
                 out = out[:expected_h, :expected_w, :]
-                crop_pixels = (h_out * w_out) - (expected_h * expected_w)
                 self._last_crop_metadata = {
                     "crop_applied": True,
                     "pre_crop_width": w_out,
                     "pre_crop_height": h_out,
                     "final_width": expected_w,
                     "final_height": expected_h,
-                    "crop_pixels": crop_pixels
+                    "crop_pixels_width": crop_pixels_width,   # C2: pixel count, never absent
+                    "crop_pixels_height": crop_pixels_height, # C2: pixel count, never absent
+                    "crop_within_tolerance": crop_within_tolerance,
+                    "crop_tolerance_px": crop_tolerance_px,
                 }
             else:
                 self._last_crop_metadata = {
@@ -177,7 +191,10 @@ class RealESRGANAdapter(BaseSRAdapter):
                     "pre_crop_height": h_out,
                     "final_width": expected_w,
                     "final_height": expected_h,
-                    "crop_pixels": 0
+                    "crop_pixels_width": 0,      # C2: always 0 when no crop, never absent
+                    "crop_pixels_height": 0,     # C2: always 0 when no crop, never absent
+                    "crop_within_tolerance": True,
+                    "crop_tolerance_px": crop_tolerance_px,
                 }
                 
             enhanced_frames.append(out)

@@ -71,15 +71,31 @@ class BenchmarkConfig(BaseModel):
         if dev_lower == "cpu":
             if self.cpu_config is None:
                 raise ValueError("cpu_config must be provided when device='cpu'")
-            
+
             if self.is_decision_run and not self.cpu_0_intentional:
+                import psutil as _psutil
+                logical_core_count = _psutil.cpu_count(logical=True) or 1
                 excl = self.cpu_config.exclude_cpu_ids or []
                 if 0 not in excl:
-                    raise ValueError(
-                        "BenchmarkConfig declared as is_decision_run on CPU must explicitly "
-                        "exclude CPU 0 (exclude_cpu_ids must contain 0) to minimize noise, "
-                        "unless cpu_0_intentional is set to True."
-                    )
+                    if logical_core_count <= 2:
+                        # D2: On ≤2-core hosts, OS interrupt contention on core 0 is
+                        # proportionally large — enforce the isolated split strictly.
+                        raise ValueError(
+                            "BenchmarkConfig declared as is_decision_run on CPU must explicitly "
+                            "exclude CPU 0 (exclude_cpu_ids must contain 0) to minimize noise "
+                            "on this ≤2-core host, unless cpu_0_intentional is set to True."
+                        )
+                    else:
+                        # D2: Above 2 cores, core-0 contention becomes proportionally smaller.
+                        # The baseline/isolated split is still available on request, but
+                        # we only warn here rather than blocking execution.
+                        import logging as _logging
+                        _logging.getLogger(__name__).warning(
+                            "BenchmarkConfig is_decision_run=True on a >2-core host with CPU 0 "
+                            "not excluded. On hosts with >2 logical cores, CPU-0 exclusion is "
+                            "recommended but not required (D2). Consider setting "
+                            "exclude_cpu_ids=[0] for the most rigorous decision-quality data."
+                        )
         else:
             if self.cpu_config is not None:
                 raise ValueError("cpu_config must be None when device is CUDA")
@@ -93,6 +109,7 @@ class TrialRecord(BaseModel):
     latency: Optional[float] = None  # in seconds; None if trial failed
     success: bool
     error_message: Optional[str] = None
+    flagged: Optional[str] = None
 
     # VRAM allocated/reserved boundary telemetry for GPU (if applicable)
     gpu_memory_allocated_before: Optional[int] = None
@@ -113,6 +130,8 @@ class LatencyStatistics(BaseModel):
     p95_method: str = "numpy_linear"
     p95_sample_count: int
     p95_confidence_note: str
+    p95_confidence: str
+    p95_min_recommended_n: int
 
     # Explicit statistical fields required by downstream tools/analysis
     min_latency: float
@@ -169,6 +188,7 @@ class BenchmarkResult(BaseModel):
     successful_trials: int
     failed_trials: int
     failures: List[str]
+    flagged: Optional[str] = None
 
 
 class MultiSessionResult(BaseModel):
@@ -177,6 +197,9 @@ class MultiSessionResult(BaseModel):
     config: BenchmarkConfig
     sessions: List[BenchmarkResult]
     metadata: Dict[str, Any]
+    decision_eligible: Optional[bool] = None
+    eligibility_reason: Optional[str] = None
+    coefficient_of_variation: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +218,7 @@ class InferenceBenchmarkHarness:
         with open(self.manifest_path, "r", encoding="utf-8") as f:
             self.manifest = json.load(f)
 
-    def run_benchmark(self, config: BenchmarkConfig) -> BenchmarkResult:
+    def run_benchmark(self, config: BenchmarkConfig, _skip_decision_split: bool = False) -> BenchmarkResult:
         """Executes a benchmark case according to the validated configuration.
 
         Parameters
@@ -208,6 +231,53 @@ class InferenceBenchmarkHarness:
         BenchmarkResult
             The structured benchmark results.
         """
+        # Step 5.5 D2: CPU-0 Isolation split check for decision-quality runs
+        if not _skip_decision_split and config.device.lower() == "cpu" and config.is_decision_run:
+            from adaptive_sr.benchmarking.cpu_control import select_cpu_ids
+
+            # 1. Isolated configuration (CPU 0 excluded)
+            excl_iso = sorted(list(set((config.cpu_config.exclude_cpu_ids or []) + [0])))
+            cpu_ids_iso = select_cpu_ids(count=len(config.cpu_config.cpu_ids), exclude_cpu_ids=excl_iso)
+            cpu_config_iso = CPUExecutionConfig(
+                cpu_ids=cpu_ids_iso,
+                num_threads=config.cpu_config.num_threads,
+                exclude_cpu_ids=excl_iso
+            )
+            config_iso = config.model_copy(update={"cpu_config": cpu_config_iso})
+
+            # 2. Baseline configuration (CPU 0 included)
+            excl_base = [cid for cid in (config.cpu_config.exclude_cpu_ids or []) if cid != 0]
+            cpu_ids_base = select_cpu_ids(count=len(config.cpu_config.cpu_ids), exclude_cpu_ids=excl_base)
+            cpu_config_base = CPUExecutionConfig(
+                cpu_ids=cpu_ids_base,
+                num_threads=config.cpu_config.num_threads,
+                exclude_cpu_ids=excl_base
+            )
+            config_base = config.model_copy(update={"cpu_config": cpu_config_base, "cpu_0_intentional": True})
+
+            # Run baseline and isolated configurations
+            res_isolated = self.run_benchmark(config_iso, _skip_decision_split=True)
+            res_baseline = self.run_benchmark(config_base, _skip_decision_split=True)
+
+            # Compute delta
+            mean_iso = res_isolated.latency_statistics.mean_latency
+            mean_base = res_baseline.latency_statistics.mean_latency
+            delta = mean_base - mean_iso
+
+            flag_status = None
+            if delta > 0.10 * mean_iso:
+                flag_status = "core0_noise_significant"
+
+            # Merge results into isolated metadata
+            res_isolated.metadata["cpu_config_baseline"] = res_baseline.model_dump()
+            res_isolated.metadata["cpu_config_isolated"] = res_isolated.model_dump()
+            res_isolated.metadata["core0_contention_delta"] = delta
+            if flag_status:
+                res_isolated.flagged = flag_status
+                res_isolated.metadata["flagged"] = flag_status
+
+            return res_isolated
+
         # Step 45.1: Validate configuration
         # Verify model is registered
         adapter = get_adapter(config.model_id)
@@ -316,7 +386,14 @@ class InferenceBenchmarkHarness:
 
                         trial_latencies.append(latency)
                         successful_trials += 1
-                        trial_records.append(TrialRecord(trial_idx=trial_idx, latency=latency, success=True))
+                        
+                        trial_flag = None
+                        if hasattr(adapter, "get_last_inference_metadata"):
+                            crop_meta = adapter.get_last_inference_metadata()
+                            if crop_meta and not crop_meta.get("crop_within_tolerance", True):
+                                trial_flag = "anomalous_crop"
+                                
+                        trial_records.append(TrialRecord(trial_idx=trial_idx, latency=latency, success=True, flagged=trial_flag))
                     except Exception as e:
                         failed_trials += 1
                         failures.append(str(e))
@@ -370,11 +447,19 @@ class InferenceBenchmarkHarness:
 
                         trial_latencies.append(latency)
                         successful_trials += 1
+                        
+                        trial_flag = None
+                        if hasattr(adapter, "get_last_inference_metadata"):
+                            crop_meta = adapter.get_last_inference_metadata()
+                            if crop_meta and not crop_meta.get("crop_within_tolerance", True):
+                                trial_flag = "anomalous_crop"
+                                
                         trial_records.append(
                             TrialRecord(
                                 trial_idx=trial_idx,
                                 latency=latency,
                                 success=True,
+                                flagged=trial_flag,
                                 gpu_memory_allocated_before=mem_before.process_gpu_memory_allocated_bytes,
                                 gpu_memory_allocated_after=mem_after.process_gpu_memory_allocated_bytes,
                                 gpu_memory_reserved_before=mem_before.process_gpu_memory_reserved_bytes,
@@ -397,6 +482,8 @@ class InferenceBenchmarkHarness:
             latencies_arr = np.array(trial_latencies)
             cnt = len(trial_latencies)
             conf_note = "Exploratory p95; limited tail resolution at n=20." if cnt <= 20 else "Sufficient tail resolution."
+            p95_conf = "exploratory" if cnt < 100 else "reliable"
+            p95_min_n = 100
             mean_val = float(np.mean(latencies_arr))
             median_val = float(np.median(latencies_arr))
             min_val = float(np.min(latencies_arr))
@@ -414,6 +501,8 @@ class InferenceBenchmarkHarness:
                 p95=p95_val,
                 p95_sample_count=cnt,
                 p95_confidence_note=conf_note,
+                p95_confidence=p95_conf,
+                p95_min_recommended_n=p95_min_n,
                 min_latency=min_val,
                 median_latency=median_val,
                 mean_latency=mean_val,
@@ -435,6 +524,8 @@ class InferenceBenchmarkHarness:
                 p95=0.0,
                 p95_sample_count=0,
                 p95_confidence_note="No trials executed.",
+                p95_confidence="exploratory",
+                p95_min_recommended_n=100,
                 min_latency=0.0,
                 median_latency=0.0,
                 mean_latency=0.0,
@@ -444,6 +535,12 @@ class InferenceBenchmarkHarness:
                 measured_trial_count=0
             )
             throughput_fps = 0.0
+
+        # Determine overall case flags
+        flagged_res = None
+        anomalous_crop_detected = any(tr.flagged == "anomalous_crop" for tr in trial_records)
+        if anomalous_crop_detected:
+            flagged_res = "anomalous_crop"
 
         # Aggregate Resource Snapshot telemetry
         res_summary = self._summarize_resources(cpu_samples, gpu_samples, boundary_snapshots)
@@ -457,6 +554,7 @@ class InferenceBenchmarkHarness:
             "session_id": benchmark_id,
             "timestamp": timestamp,
             "benchmark_config": config.model_dump(),
+            "flagged": flagged_res,
             "input_details": {
                 "input_id": config.input_id,
                 "width": input_shape[1],
@@ -490,6 +588,7 @@ class InferenceBenchmarkHarness:
             successful_trials=successful_trials,
             failed_trials=failed_trials,
             failures=failures,
+            flagged=flagged_res,
         )
 
     def run_multi_session(self, config: BenchmarkConfig, num_sessions: int = 1) -> MultiSessionResult:
@@ -505,14 +604,63 @@ class InferenceBenchmarkHarness:
         benchmark_id = f"multisession_{config.model_id}_x{config.scale}_{config.device.replace(':', '_')}_{int(time.time())}"
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
+        # Calculate CV and eligibility
+        session_means = [s.latency_statistics.mean_latency for s in sessions]
+        cv = None
+        decision_eligible = False
+        eligibility_reason = None
+
+        if len(sessions) < 3:
+            decision_eligible = False
+            eligibility_reason = "insufficient_sessions_count"
+        else:
+            mean_of_means = np.mean(session_means)
+            std_of_means = np.std(session_means, ddof=1) if len(session_means) > 1 else 0.0
+            cv = std_of_means / mean_of_means if mean_of_means > 0.0 else 0.0
+            if cv <= 0.15:
+                decision_eligible = True
+            else:
+                decision_eligible = False
+                eligibility_reason = "between_session_variance_exceeds_threshold"
+
+        # I2: Build eligibility record with explicit (model, device, cpu-affinity-config) tuple
+        # so downstream decision documents can cite the exact configuration scope.
+        cpu_affinity_config = None
+        if config.cpu_config is not None:
+            cpu_affinity_config = {
+                "cpu_ids": config.cpu_config.cpu_ids,
+                "num_threads": config.cpu_config.num_threads,
+                "exclude_cpu_ids": config.cpu_config.exclude_cpu_ids or [],
+            }
+
+        eligibility_record = {
+            "scope_tuple": {
+                "model_id": config.model_id,
+                "device": config.device,
+                "cpu_affinity_config": cpu_affinity_config,  # I2: per-config tuple key
+            },
+            "session_means": session_means,
+            "session_thermal_states": [
+                s.metadata.get("host_metadata", {}).get("thermal_state", "not_measured")
+                for s in sessions
+            ],
+            "coefficient_of_variation": cv,
+            "decision_eligible": decision_eligible,
+            "eligibility_reason": eligibility_reason
+        }
+
         return MultiSessionResult(
             benchmark_id=benchmark_id,
             config=config,
             sessions=sessions,
             metadata={
                 "num_sessions": num_sessions,
-                "timestamp": timestamp
-            }
+                "timestamp": timestamp,
+                "eligibility_record": eligibility_record
+            },
+            decision_eligible=decision_eligible,
+            eligibility_reason=eligibility_reason,
+            coefficient_of_variation=cv
         )
 
     def _get_host_metadata(self, is_gpu: bool, device_id: int) -> HostMetadata:
@@ -622,3 +770,41 @@ def cv2_capture_frames(file_path: str) -> List[np.ndarray]:
     finally:
         cap.release()
     return frames
+
+
+class BenchmarkReportGenerator:
+    """Report generator formatting headline tables, hiding exploratory p95 values, and listing footnotes."""
+
+    @staticmethod
+    def generate_comparison_table(results: List[BenchmarkResult]) -> str:
+        lines = []
+        lines.append("| Model ID | Device | Mean Latency (s) | Median Latency (s) | Max Latency (s) | p95 Latency (s) | Notes |")
+        lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+
+        footnotes = []
+        footnote_counter = 1
+
+        for res in results:
+            stats = res.latency_statistics
+            model = res.config.model_id
+            device = res.config.device
+            mean_l = f"{stats.mean_latency:.4f}"
+            median_l = f"{stats.median_latency:.4f}"
+            max_l = f"{stats.max_latency:.4f}"
+
+            if stats.p95_confidence == "exploratory":
+                p95_l = f"Fallback (med={median_l}/max={max_l})"
+                note = f"Footnote [{footnote_counter}]"
+                footnotes.append(f"[{footnote_counter}] Exploratory p95 for {model} on {device}: {stats.p95_latency:.4f}s (n={stats.count})")
+                footnote_counter += 1
+            else:
+                p95_l = f"{stats.p95_latency:.4f}"
+                note = "Reliable p95"
+
+            lines.append(f"| {model} | {device} | {mean_l} | {median_l} | {max_l} | {p95_l} | {note} |")
+
+        report = "\n".join(lines)
+        if footnotes:
+            report += "\n\n**Footnotes:**\n" + "\n".join(f"- {fn}" for fn in footnotes)
+
+        return report
