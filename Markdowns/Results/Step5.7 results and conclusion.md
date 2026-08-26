@@ -14,7 +14,7 @@
 
 ## 2. Quantitative Benchmark Comparisons
 
-| Model | Scale | Device | Latency (median, ms) | p95 Latency (ms) | p95 Feasibility (exploratory) | Est. FPS | Source FPS | Budget (ms) | Ratio | Real-Time (measured) | Decision-Eligible | Session Count | p95 Conf | Interpretation | Caveats / Eligibility Warnings |
+| Model | Scale | Device | Latency (median, ms) | p95 Latency (ms) | p95 vs Budget (non-decisive) | Est. FPS | Source FPS | Budget (ms) | Ratio | Real-Time (measured) | Decision-Eligible | Session Count | p95 Conf | Interpretation | Caveats / Eligibility Warnings |
 | :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | tinysr | x2 | cpu | 644.47 | 660.97 | NO | 1.55 | 30.0 | 33.33 | 0.05 | NO | NO | 1 | exploratory | per_frame | Ineligibility reason: insufficient_sessions_count |
 
@@ -31,7 +31,9 @@
 ### 3.3 Failing Configurations (Unfeasible for Real-Time)
 - `tinysr` x2 on `cpu` (Latency: **644.47 ms**)
 
-## 4. Scale-Degradation Performance Trend
+## 4. Measured Scale Configuration
+
+No scale-degradation trend can be established from the currently available benchmark data because only the x2 configuration has been measured.
 
 ### tinysr on cpu
 - **Scale x2**: Latency **644.47 ms** (1.55 FPS), UNFEASIBLE.

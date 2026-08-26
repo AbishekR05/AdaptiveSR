@@ -266,7 +266,7 @@ def generate_markdown_report(analyzed: List[Dict[str, Any]]) -> str:
 
     # Main comparison table with all Issue 3/4 missing schema fields
     table_lines = [
-        "| Model | Scale | Device | Latency (median, ms) | p95 Latency (ms) | p95 Feasibility (exploratory) | Est. FPS | Source FPS | Budget (ms) | Ratio | Real-Time (measured) | Decision-Eligible | Session Count | p95 Conf | Interpretation | Caveats / Eligibility Warnings |",
+        "| Model | Scale | Device | Latency (median, ms) | p95 Latency (ms) | p95 vs Budget (non-decisive) | Est. FPS | Source FPS | Budget (ms) | Ratio | Real-Time (measured) | Decision-Eligible | Session Count | p95 Conf | Interpretation | Caveats / Eligibility Warnings |",
         "| :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |"
     ]
 
@@ -423,7 +423,8 @@ def generate_markdown_report(analyzed: List[Dict[str, Any]]) -> str:
         report += "- None.\n"
 
     report += (
-        f"\n## 4. Scale-Degradation Performance Trend\n\n"
+        f"\n## 4. Measured Scale Configuration\n\n"
+        f"No scale-degradation trend can be established from the currently available benchmark data because only the x2 configuration has been measured.\n\n"
         f"{scale_summary}\n\n"
         f"## 5. CPU vs. GPU Performance Comparison\n\n"
         f"{cpu_gpu_table}\n\n"
