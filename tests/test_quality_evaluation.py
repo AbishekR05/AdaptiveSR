@@ -57,14 +57,15 @@ def test_calculate_ssim_y():
 
 
 def test_run_vmaf_on_chunk_mock():
-    # Verify mocked run_vmaf_on_chunk returns correct schema
+    # Verify run_vmaf_on_chunk returns unavailable/null since it is not implemented/invoked
     f1 = np.zeros((64, 64, 3), dtype=np.uint8)
     f2 = np.zeros((64, 64, 3), dtype=np.uint8)
     mean, per_frame, err, reason = run_vmaf_on_chunk([f1], [f2], 64, 64)
-    assert mean is not None
-    assert len(per_frame) == 1
-    assert err is False
-    assert reason is None
+    assert mean is None
+    assert len(per_frame) == 0
+    assert err is True
+    assert reason == "vmaf_unavailable"
+
 
 
 def test_quality_evaluation_integration(tmp_path):

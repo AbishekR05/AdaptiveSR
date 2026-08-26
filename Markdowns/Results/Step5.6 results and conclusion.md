@@ -3,7 +3,8 @@
 **Evaluation Date:** 2026-08-26  
 **Environment:** CUDA (GTX 1650 4GB VRAM), WDDM PCI-e mode  
 **Corpus:** Layer B — 3 synthetic procedural noise clips (1280x720, 30 FPS, 2 chunks each)  
-**Metrics:** Y-channel PSNR (dB), Y-channel SSIM (0-1), VMAF (0-100)
+**Metrics:** Y-channel PSNR (dB), Y-channel SSIM (0-1), VMAF (N/A)  
+**Freeze Status:** PIPELINE VALIDATED. Real-world quality evidence deferred pending genuine Layer B natural-video corpus (tracked as future work).
 
 > [!IMPORTANT]
 > **Executive Disclosure:** Sections below labeled "Pipeline / Infrastructure Validation" use bicubic interpolation, not SR model inference, and must not be read as model quality results.
@@ -29,7 +30,7 @@ The Layer B reference corpus consists of 3 video clips, but they are **not** rea
 
 - **PSNR:** Computed on the **Y-channel** of the BGR->YCbCr conversion using float64 precision.
 - **SSIM:** Computed on the Y-channel. Enforces matching input resolutions by assertion.
-- **VMAF:** Computed conditionally using ffmpeg `libvmaf` filter.
+- **VMAF:** Not computed on the host. In the absence of a live runtime pipeline run with libvmaf execution, VMAF is honestly reported as `null` with `vmaf_unavailable: true` across all records.
 - **LR Generation:** Deterministically derived from HR using `cv2.INTER_AREA`.
 - **Modes:** Partitioned into `model_inference` (running real models via Step 5.2 adapters) and `bicubic_simulation` (baseline interpolation).
 
@@ -41,21 +42,21 @@ This section presents the results of the `evaluation_mode = "bicubic_simulation"
 
 ### 3.1 Quantitative Baseline Results
 
-| Clip ID | Model ID (Mode) | Scale | PSNR (dB) | SSIM (192x108) | VMAF (Mocked) |
+| Clip ID | Model ID (Mode) | Scale | PSNR (dB) | SSIM (192x108) | VMAF |
 |---|---|---|---|---|---|
-| `clip_001_lowmotion_30fps` | `bicubic_baseline` | x2 | 50.58 | 0.9986 | 95.12 |
-| `clip_001_lowmotion_30fps` | `bicubic_baseline` | x3 | 49.32 | 0.9979 | 95.12 |
-| `clip_001_lowmotion_30fps` | `bicubic_baseline` | x4 | 47.71 | 0.9968 | 94.83 |
-| `clip_002_moderatemotion_30fps` | `bicubic_baseline` | x2 | 51.13 | 0.9986 | 94.98 |
-| `clip_002_moderatemotion_30fps` | `bicubic_baseline` | x3 | 49.78 | 0.9978 | 94.91 |
-| `clip_002_moderatemotion_30fps` | `bicubic_baseline` | x4 | 48.23 | 0.9968 | 94.93 |
-| `clip_003_highmotion_30fps` | `bicubic_baseline` | x2 | 50.49 | 0.9985 | 94.79 |
-| `clip_003_highmotion_30fps` | `bicubic_baseline` | x3 | 49.10 | 0.9977 | 94.93 |
-| `clip_003_highmotion_30fps` | `bicubic_baseline` | x4 | 47.73 | 0.9967 | 95.21 |
+| `clip_001_lowmotion_30fps` | `bicubic_baseline` | x2 | 50.58 | 0.9986 | N/A |
+| `clip_001_lowmotion_30fps` | `bicubic_baseline` | x3 | 49.32 | 0.9979 | N/A |
+| `clip_001_lowmotion_30fps` | `bicubic_baseline` | x4 | 47.71 | 0.9968 | N/A |
+| `clip_002_moderatemotion_30fps` | `bicubic_baseline` | x2 | 51.13 | 0.9986 | N/A |
+| `clip_002_moderatemotion_30fps` | `bicubic_baseline` | x3 | 49.78 | 0.9978 | N/A |
+| `clip_002_moderatemotion_30fps` | `bicubic_baseline` | x4 | 48.23 | 0.9968 | N/A |
+| `clip_003_highmotion_30fps` | `bicubic_baseline` | x2 | 50.49 | 0.9985 | N/A |
+| `clip_003_highmotion_30fps` | `bicubic_baseline` | x3 | 49.10 | 0.9977 | N/A |
+| `clip_003_highmotion_30fps` | `bicubic_baseline` | x4 | 47.73 | 0.9967 | N/A |
 
 ### 3.2 Observations & Metric Saturation Investigation
 - **Bicubic Baseline Metrics & Corpus Degeneracy:** The baseline PSNR values are implausibly high (47-51 dB) for a standard bicubic downsample/upsample. This occurs because the procedural noise fractal plasma noise corpus is structureless, mathematically smooth, and degenerate for reference-based quality metrics. The lack of natural high-frequency textures and complex boundaries allows bicubic interpolation to reconstruct the signal near-perfectly, saturating the scores.
-- **VMAF Mocking Disclosure:** In the current Step 5.6 pipeline, VMAF is simulated using a fast mock sequence calculation (returning a hardcoded ~95 value) to verify JSON schema integration. The reported VMAF baseline scores of ~95 are mocked and do not represent actual `libvmaf` output.
+- **VMAF Disclosures:** VMAF was originally mocked during early testing to check JSON schema integration. In this report, all simulated VMAF numbers have been removed and reverted to their honest unavailable values (`null` / `vmaf_unavailable: true`) since a live runtime `libvmaf` execution is not run on the host.
 - **SSIM Downsampling Validation:** A validation check on a representative full-resolution sample vs 192x108 downsampled SSIM was performed. The measured absolute deviation was:
   - **Mean Deviation:** 5.52e-05
   - **Max Deviation:** 7.13e-05
@@ -69,13 +70,13 @@ This section presents the results of the `evaluation_mode = "model_inference"` r
 
 ### 4.1 Quantitative Model Results
 
-| Clip ID | Model ID | Scale | PSNR (dB) | SSIM (Full-Res) | VMAF (Mocked) | Device |
+| Clip ID | Model ID | Scale | PSNR (dB) | SSIM (Full-Res) | VMAF | Device |
 |---|---|---|---|---|---|---|
-| `clip_001_lowmotion_30fps` | `tinysr` | x2 | 34.56 | 0.9740 | 94.99 | `cuda` |
+| `clip_001_lowmotion_30fps` | `tinysr` | x2 | 34.56 | 0.9740 | N/A | `cuda` |
 
 ### 4.2 Observations & Caveats
 - **tinysr (FP32) Performance & Caveat:** At x2 scale, `tinysr` (FSRCNN) achieves a PSNR of **34.56 dB** and SSIM of **0.9740**. However, **this result is based on exactly one clip and one chunk and is executed on synthetic procedural content**. This is a compliance floor proof-of-concept, **not** a general quality claim. Broader real-world coverage is required in later steps before making general quality claims.
-- **VMAF Caveat:** The VMAF score of **94.99** is generated by the pipeline's VMAF mock function and is not a real tool output.
+- **VMAF Caveat:** VMAF is reported as `N/A` (`null` / `vmaf_unavailable: true`) because VMAF is not computed on the evaluation host.
 
 ---
 
@@ -102,7 +103,7 @@ tests/test_quality_evaluation.py::test_calculate_psnr_y                         
 tests/test_quality_evaluation.py::test_calculate_ssim_y                                      PASSED
 tests/test_quality_evaluation.py::test_run_vmaf_on_chunk_mock                                PASSED
 tests/test_quality_evaluation.py::test_quality_evaluation_integration                         PASSED
-tests/test_quality_evaluation.py::test_bicubic_cannot_be_labeled_as_model                    PASSED
+tests/test_bicubic_cannot_be_labeled_as_model                                                PASSED
 tests/test_quality_evaluation.py::test_evaluation_mode_field_required                        PASSED
 tests/test_quality_evaluation.py::test_reference_output_dimension_mismatch_raises            PASSED
 tests/test_quality_evaluation.py::test_frame_count_mismatch_raises                           PASSED
@@ -140,7 +141,7 @@ Coverage details:
 ## 8. Conclusions
 
 1. **The Step 5.6 pipeline has been successfully hardened** to prevent mislabeling of simulated runs as model results.
-2. **`tinysr` (FP32, x2) real inference is successfully integrated** and validated on CUDA. However, the quality numbers (34.56 dB PSNR, 0.9740 SSIM) represent a single-sample synthetic run floor, not general quality evidence of real-world super-resolution performance.
+2. **`tinysr` (FP32, x2) real inference is successfully integrated** and validated on CUDA. However, the quality numbers (34.56 dB PSNR, 0.9740 SSIM) represent a single-sample synthetic run floor, not general quality evidence of real-world super-resolution performance. VMAF is unavailable (`null`) due to lack of a live runtime `libvmaf` execution path on the host.
 3. **The SSIM downsampling optimization is valid for bicubic baseline testing** (deviation `< 0.0001`), but must be re-validated if applied to model-inference results at scale.
 4. **All test assertions and join keys are verified and documented.** `input_id` matches the Step 5.5 configuration schema, and other identifiers are clearly marked as Step-5.6-specific additions.
-
+5. **Step 5.6 freezes as: PIPELINE VALIDATED.** Real-world quality evidence is deferred pending a genuine Layer B natural-video corpus, and real VMAF scoring is deferred pending live `libvmaf` command integration on the target deployment host.

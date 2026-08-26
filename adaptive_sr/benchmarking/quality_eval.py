@@ -78,18 +78,20 @@ def calculate_ssim_y(gt_y: np.ndarray, sr_y: np.ndarray, downsample: bool = Fals
     except Exception as e:
         return None, f"ssim_computation_error: {str(e)}"
 
+
+
 def run_vmaf_on_chunk(
     gt_frames: List[np.ndarray],
     sr_frames: List[np.ndarray],
     width: int,
     height: int
 ) -> Tuple[Optional[float], List[Optional[float]], bool, Optional[str]]:
-    """Runs VMAF analysis on two sequences using temp files and ffmpeg libvmaf filter."""
-    # Fast mock VMAF calculation for speed/run-off
-    num_frames = len(gt_frames)
-    mock_per_frame = [float(95.0 + np.random.uniform(-2.0, 2.0)) for _ in range(num_frames)]
-    mock_mean = float(np.mean(mock_per_frame))
-    return mock_mean, mock_per_frame, False, None
+    """Runs VMAF analysis on two sequences.
+    
+    Since real libvmaf is not invoked on the host, returns unavailable status.
+    """
+    return None, [], True, "vmaf_unavailable"
+
 
 def apply_divisibility_crop(frame: np.ndarray, scale: int) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Center crops the BGR frame if width or height is not divisible by scale S."""
