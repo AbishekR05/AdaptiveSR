@@ -15,12 +15,15 @@ from dataclasses import dataclass, asdict
 
 def classify_realtime_ratio(real_time_ratio: float) -> str:
     """
-    Classifies a real-time feasibility ratio into deterministic tiers:
-    - "realtime": real_time_ratio >= 1.0 (Headroom >= 0%, processing <= frame budget)
-    - "near_realtime": 0.75 <= real_time_ratio < 1.0 (Within 25% of budget, recoverable via buffering/light frame-skip)
-    - "below_realtime": 0.50 <= real_time_ratio < 0.75 (Takes 1.33x to 2.0x budget)
-    - "severely_below_realtime": real_time_ratio < 0.50 (Takes > 2.0x budget)
+    Classifies a real-time feasibility ratio into deterministic computational proximity tiers:
+    - "realtime": real_time_ratio >= 1.0 (SR latency <= frame budget; computational headroom >= 0%)
+    - "near_realtime": 0.75 <= real_time_ratio < 1.0 (SR latency is within 25% of frame budget)
+    - "below_realtime": 0.50 <= real_time_ratio < 0.75 (SR latency takes 1.33x to 2.0x frame budget)
+    - "severely_below_realtime": real_time_ratio < 0.50 (SR latency takes > 2.0x frame budget)
     - "invalid": non-positive or undefined ratio
+
+    Note: These tiers classify computational proximity only. Adaptation policies in later steps
+    determine specific runtime actions (e.g. model switching, scaling, or frame skipping).
     """
     if real_time_ratio is None or math.isnan(real_time_ratio) or real_time_ratio <= 0.0:
         return "invalid"
@@ -49,7 +52,8 @@ class FPSAdaptationSignal:
     base_representation_id: str
     measurement_provenance: str
     decision_eligible: bool
-    end_to_end_streaming_feasible: bool
+    end_to_end_streaming_feasible: Optional[bool]
+    end_to_end_status: str
     warnings: List[str]
 
     def to_dict(self) -> Dict[str, Any]:
@@ -59,7 +63,7 @@ class FPSAdaptationSignal:
 class FPSAdapter:
     """
     FPS Adaptation Layer.
-    Evaluates real-time feasibility and adaptation signals without altering underlying SR execution pipelines.
+    Evaluates real-time SR feasibility and adaptation signals without altering underlying SR execution pipelines.
     """
 
     @staticmethod
@@ -72,10 +76,11 @@ class FPSAdapter:
         base_representation_id: str = "360p",
         measurement_provenance: str = "direct_measurement",
         decision_eligible: bool = True,
-        network_rtt_ms: Optional[float] = None
+        network_rtt_ms: Optional[float] = None,
+        end_to_end_latency_ms: Optional[float] = None
     ) -> FPSAdaptationSignal:
         """
-        Evaluates FPS feasibility for a given source FPS and measured SR latency.
+        Evaluates FPS feasibility for a given source FPS and measured SR processing latency.
         """
         warnings: List[str] = []
 
@@ -91,14 +96,19 @@ class FPSAdapter:
         realtime_feasible = float(measured_latency_ms) <= frame_budget_ms
         adaptation_tier = classify_realtime_ratio(real_time_ratio)
 
-        # End-to-end streaming feasibility check
-        total_latency_ms = float(measured_latency_ms)
-        if network_rtt_ms is not None and network_rtt_ms > 0.0:
-            total_latency_ms += network_rtt_ms
+        # End-to-end streaming feasibility evaluation
+        # Require complete pipeline evidence (client decode/render + network + edge processing).
+        # Cloud RTT or SR latency alone is incomplete; return null and "not_evaluated" unless full e2e latency is provided.
+        if end_to_end_latency_ms is not None and end_to_end_latency_ms > 0.0:
+            end_to_end_streaming_feasible: Optional[bool] = (end_to_end_latency_ms <= frame_budget_ms)
+            end_to_end_status = "evaluated"
         else:
-            warnings.append("Network RTT not provided or zero; end_to_end_streaming_feasible reflects SR inference latency only.")
+            end_to_end_streaming_feasible = None
+            end_to_end_status = "not_evaluated"
+            warnings.append("End-to-end streaming feasibility not evaluated (complete pipeline evidence unavailable in Step 7).")
 
-        end_to_end_streaming_feasible = (total_latency_ms <= frame_budget_ms)
+        if network_rtt_ms is not None:
+            warnings.append(f"Network RTT recorded ({network_rtt_ms:.2f} ms); Cloud RTT does not substitute for complete end-to-end pipeline evidence.")
 
         if not decision_eligible:
             warnings.append("Configuration is not decision-eligible under Step 5 variance/session requirements.")
@@ -117,7 +127,8 @@ class FPSAdapter:
             base_representation_id=str(base_representation_id),
             measurement_provenance=str(measurement_provenance),
             decision_eligible=bool(decision_eligible),
-            end_to_end_streaming_feasible=bool(end_to_end_streaming_feasible),
+            end_to_end_streaming_feasible=end_to_end_streaming_feasible,
+            end_to_end_status=end_to_end_status,
             warnings=warnings
         )
 

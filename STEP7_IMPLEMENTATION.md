@@ -20,16 +20,16 @@ $$\text{realtime\_feasible} = \begin{cases} \text{True} & \text{if } \text{measu
 
 ---
 
-## 2. Adaptation Classification Tiers
+## 2. Adaptation Computational Proximity Tiers
 
-Deterministic classification based on `real_time_ratio`:
+Deterministic classification based on `real_time_ratio` (classifies computational proximity only; runtime actions like model switching, scaling down, or frame skipping are determined by later adaptation policy in Step 8+):
 
-| Adaptation Tier | Condition | Headroom | Interpretation / Action |
+| Adaptation Tier | Condition | Headroom | Computational Proximity |
 |---|---|---|---|
-| `realtime` | $\text{real\_time\_ratio} \ge 1.0$ | $\ge 0\%$ | Processing completes within frame budget. Safe for real-time playback. |
-| `near_realtime` | $0.75 \le \text{real\_time\_ratio} < 1.0$ | $-25\%$ to $0\%$ | Within $25\%$ of budget; recoverable via modest client buffering or light frame-skipping. |
-| `below_realtime` | $0.50 \le \text{real\_time\_ratio} < 0.75$ | $-50\%$ to $-25\%$ | Latency is $1.33\times$ to $2.0\times$ frame budget; playback stalls expected without scaling down. |
-| `severely_below_realtime` | $\text{real\_time\_ratio} < 0.50$ | $< -50\%$ | Latency exceeds $2.0\times$ frame budget; unfeasible for real-time execution. |
+| `realtime` | $\text{real\_time\_ratio} \ge 1.0$ | $\ge 0\%$ | SR latency $\le$ frame budget. Computational headroom is non-negative. |
+| `near_realtime` | $0.75 \le \text{real\_time\_ratio} < 1.0$ | $-25\%$ to $0\%$ | SR latency is within $25\%$ of frame budget. |
+| `below_realtime` | $0.50 \le \text{real\_time\_ratio} < 0.75$ | $-50\%$ to $-25\%$ | SR latency takes $1.33\times$ to $2.0\times$ frame budget. |
+| `severely_below_realtime` | $\text{real\_time\_ratio} < 0.50$ | $< -50\%$ | SR latency exceeds $2.0\times$ frame budget. |
 | `invalid` | Non-positive or `NaN` | N/A | Non-positive or undefined FPS / latency inputs. |
 
 ---
@@ -51,18 +51,26 @@ Deterministic classification based on `real_time_ratio`:
   "base_representation_id": "360p",
   "measurement_provenance": "step6_edge_telemetry",
   "decision_eligible": true,
-  "end_to_end_streaming_feasible": true,
-  "warnings": []
+  "end_to_end_streaming_feasible": null,
+  "end_to_end_status": "not_evaluated",
+  "warnings": [
+    "End-to-end streaming feasibility not evaluated (complete pipeline evidence unavailable in Step 7)."
+  ]
 }
 ```
 
 ---
 
-## 4. Measurement Provenance & Integration
+## 4. Architectural Rules & Telemetry
 
-- **Step 5 Benchmark Data**: `FPSAdapter.evaluate_from_step5_record(record)` ingests offline benchmark records (`fps_feasibility.json` / `BenchmarkResult`) with provenance `"step5_benchmark"`.
-- **Step 6 Edge Telemetry**: `FPSAdapter.evaluate_from_step6_telemetry(telemetry)` ingests live Edge response headers (`X-SR-Processing-Time`, `X-Edge-Cloud-RTT`) or JSON telemetry with provenance `"step6_edge_telemetry"`.
-- **Direct Parameter Evaluation**: `FPSAdapter.evaluate(source_fps, measured_latency_ms, ...)` provides standalone evaluation for unit tests or upstream planners.
+1. **End-to-End Streaming Feasibility**:
+   `end_to_end_streaming_feasible` is NOT inferred from SR realtime feasibility alone or by adding Cloud RTT. Because complete pipeline evidence (client decode, network transit, edge processing, client render/buffering) is unavailable in Step 7, `end_to_end_streaming_feasible` returns `null` (`None`) with `end_to_end_status = "not_evaluated"`.
+2. **Decision Eligibility**:
+   `decision_eligible` preserves Step 5's eligibility semantics (session count $\ge 3$, CV $\le 15\%$, matching configuration scope/provenance). A configuration can be `realtime_feasible = true` while `decision_eligible = false`.
+3. **Telemetry Integration**:
+   - `X-SR-Processing-Time` represents measured SR processing per the Step 6 contract.
+   - `X-Edge-Cloud-RTT` is recorded as network RTT telemetry and is not conflated with complete end-to-end pipeline latency.
+   - SR feasibility (`realtime_feasible`) remains strictly based on measured SR processing latency.
 
 ---
 
@@ -72,7 +80,7 @@ Deterministic classification based on `real_time_ratio`:
 pytest tests/test_fps_adaptation.py tests/test_remote_sr.py tests/test_foundation.py -v
 ```
 
-### Test Summary (28/28 Passed):
+### Test Summary (30/30 Passed):
 - `test_30fps_latency_below_budget`: Passed
 - `test_30fps_latency_above_budget`: Passed
 - `test_exact_budget_boundary`: Passed
@@ -82,7 +90,9 @@ pytest tests/test_fps_adaptation.py tests/test_remote_sr.py tests/test_foundatio
 - `test_multiple_models_scales_devices`: Passed
 - `test_decision_eligibility_distinction`: Passed
 - `test_classification_thresholds`: Passed
-- `test_real_local_step6_integration`: Passed (Live end-to-end Edge HTTP TestClient execution with `TinySR` forward pass)
+- `test_real_local_step6_integration`: Passed
+- `test_realtime_feasible_true_while_end_to_end_streaming_feasible_none`: Passed
+- `test_cloud_rtt_does_not_imply_end_to_end_feasibility`: Passed
 - `tests/test_remote_sr.py` (5 tests): Passed
 - `tests/test_foundation.py` (13 tests): Passed
 

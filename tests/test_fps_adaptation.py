@@ -175,3 +175,25 @@ def test_real_local_step6_integration():
         assert signal.device == "cpu"
         assert signal.measurement_provenance == "step6_edge_telemetry"
         assert signal.adaptation_tier in ["realtime", "near_realtime", "below_realtime", "severely_below_realtime"]
+        assert signal.end_to_end_streaming_feasible is None
+        assert signal.end_to_end_status == "not_evaluated"
+
+
+# Test 11: realtime_feasible=True while end_to_end_streaming_feasible=None (not_evaluated)
+def test_realtime_feasible_true_while_end_to_end_streaming_feasible_none():
+    signal = FPSAdapter.evaluate(source_fps=30.0, measured_latency_ms=20.0, decision_eligible=True)
+    assert signal.realtime_feasible is True
+    assert signal.decision_eligible is True
+    assert signal.end_to_end_streaming_feasible is None
+    assert signal.end_to_end_status == "not_evaluated"
+    assert any("End-to-end streaming feasibility not evaluated" in w for w in signal.warnings)
+
+
+# Test 12: Cloud RTT does not automatically imply end-to-end streaming feasibility
+def test_cloud_rtt_does_not_imply_end_to_end_feasibility():
+    signal = FPSAdapter.evaluate(source_fps=30.0, measured_latency_ms=20.0, network_rtt_ms=5.0)
+    assert signal.realtime_feasible is True
+    assert signal.end_to_end_streaming_feasible is None
+    assert signal.end_to_end_status == "not_evaluated"
+    assert any("Cloud RTT does not substitute" in w for w in signal.warnings)
+
