@@ -12,6 +12,26 @@ from adaptive_sr.services.edge.app import cache as edge_cache
 from adaptive_sr.services.client.app import ClientPlayer
 from adaptive_sr.services.edge.cache import DiskCache
 
+@pytest.fixture(scope="session", autouse=True)
+def ensure_sample_chunks():
+    """Ensures synthetic .mp4 chunks exist in cloud storage for baseline foundation tests."""
+    import cv2
+    import numpy as np
+    from adaptive_sr.shared.config import CLOUD_STORAGE_DIR
+
+    target_dir = Path(CLOUD_STORAGE_DIR) / "videos" / "sample" / "360p"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    for chunk_id in ["0000", "0001", "0002"]:
+        chunk_path = target_dir / f"{chunk_id}.mp4"
+        if not chunk_path.exists() or chunk_path.stat().st_size == 0:
+            out = cv2.VideoWriter(str(chunk_path), fourcc, 30, (640, 360))
+            for _ in range(60):
+                frame = np.zeros((360, 640, 3), dtype=np.uint8)
+                frame[:, :] = (100, 150, 200)
+                out.write(frame)
+            out.release()
+
 @pytest.fixture
 def temp_cache_dir(tmp_path):
     """Fixture to provide a clean cache directory for Edge during tests."""
