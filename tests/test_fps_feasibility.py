@@ -85,6 +85,31 @@ def test_frame_budget_calculation():
     ans60 = analyze_record(rec60, fps_map, frame_count_map)
     assert ans60["frame_budget_ms"] == pytest.approx(1000.0 / 60.0)
 
+    cfg120 = create_base_config()
+    cfg120["input_id"] = "synthetic_120fps"
+    rec120 = create_base_record(cfg120, [0.005] * 20)
+    ans120 = analyze_record(rec120, fps_map, frame_count_map)
+    assert ans120["frame_budget_ms"] == pytest.approx(1000.0 / 120.0)
+
+
+def test_feasibility_boundary_conditions():
+    fps_map = {"synthetic_lowmotion_30fps": 30.0} # 33.333ms budget
+    
+    # Exactly equal latency (33.333ms -> 0.03333333333333333s)
+    rec_equal = create_base_record(create_base_config(), [1.0 / 30.0] * 20)
+    ans_equal = analyze_record(rec_equal, fps_map, {})
+    assert ans_equal["real_time_feasible"] is True
+
+    # Below budget (10ms) -> feasible
+    rec_below = create_base_record(create_base_config(), [0.010] * 20)
+    ans_below = analyze_record(rec_below, fps_map, {})
+    assert ans_below["real_time_feasible"] is True
+
+    # Above budget (50ms) -> infeasible
+    rec_above = create_base_record(create_base_config(), [0.050] * 20)
+    ans_above = analyze_record(rec_above, fps_map, {})
+    assert ans_above["real_time_feasible"] is False
+
 
 # Test 2: test_estimated_fps_calculation
 def test_estimated_fps_calculation():
@@ -177,6 +202,11 @@ def test_invalid_latency_raises():
     rec_zero = create_base_record(create_base_config(), [0.0] * 20)
     with pytest.raises(ValueError, match="Invalid non-positive latency observed"):
         analyze_record(rec_zero, fps_map, {})
+
+    # Negative latency
+    rec_neg = create_base_record(create_base_config(), [-0.01] * 20)
+    with pytest.raises(ValueError, match="Invalid non-positive latency observed"):
+        analyze_record(rec_neg, fps_map, {})
 
 
 # Test 10: test_eligibility_warnings_preserved
@@ -278,6 +308,12 @@ def test_integration_real_step5_5_fixture():
     harness = InferenceBenchmarkHarness()
     cpu_conf = CPUExecutionConfig(cpu_ids=[1], num_threads=2, exclude_cpu_ids=[])
     
+    import os
+    # Check if target benchmark chunk file exists on disk
+    target_chunk = "data/benchmarks/sr/chunks/synthetic_lowmotion_30fps_0000.mp4"
+    if not os.path.exists(target_chunk):
+        pytest.skip(f"Benchmark video chunk missing at {target_chunk}")
+
     # Create configuration case using dummy adapter
     cfg = BenchmarkConfig(
         model_id="dummy_feasibility_adapter",
