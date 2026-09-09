@@ -17,6 +17,7 @@ from adaptive_sr.runtime.orchestrator import (
     DynamicConditionProfile,
     QualityEvidenceStore,
     EdgeRegistry,
+    NativeDeliveryRegistry,
 )
 from adaptive_sr.runtime.telemetry import ChunkTelemetry, RuntimeState
 from adaptive_sr.adaptation.fps_adapter import FPSAdapter, FPSAdaptationSignal
@@ -917,5 +918,112 @@ def test_cumulative_stall_accounting_across_multiple_failed_stalled_chunks():
     assert t1.buffer.stall_duration > 0.0
     assert runtime.state.stall_count == 2
     assert runtime.state.total_stall_duration > stall_dur_0
+
+
+def test_native_fallback_real_content_delivery_integration():
+    """Integration test verifying real native chunk delivery when no SR candidate is selected."""
+    native_reg = NativeDeliveryRegistry({"360p": "http://localhost:8000/cloud/videos/sample/360p"})
+    runtime = AdaptiveSRRuntime(
+        video_id="sample",
+        min_suitability_threshold=99.0,
+        fallback_representation_id="360p",
+        native_registry=native_reg,
+        # execution_handler is None -> uses default _default_execute_native
+    )
+    telemetry = runtime.process_chunk("0000", chunk_duration=2.0)
+
+    assert telemetry.decision.decision in ["no_suitable_candidate", "no_feasible_candidates"]
+    assert telemetry.delivery_mode == "native"
+    assert telemetry.buffer.chunk_delivered is True
+    assert telemetry.buffer.delivered_chunk_duration == 2.0
+    assert telemetry.executed_configuration["delivery_endpoint"] == "http://localhost:8000/cloud/videos/sample/360p"
+    assert telemetry.network.bytes_received > 0
+    assert telemetry.timing.client_elapsed_seconds > 0.0
+
+
+def test_post_execution_failure_fresh_adaptation_cycle():
+    """Verify fresh observation/decision cycle occurs on chunk N+2 after a failed chunk N+1, preserving previous executed state."""
+    runtime = AdaptiveSRRuntime(video_id="sample")
+
+    # Chunk 0 (N): SR-A succeeds
+    cfg_A = {"edge_id": "edge_01", "base_representation_id": "360p", "target_resolution": "720p", "model_id": "tinysr", "scale": 2, "device": "cpu"}
+    with patch.object(FuzzyAdaptiveDecisionEngine, "evaluate_candidates") as mock_eval:
+        mock_eval.return_value = FuzzyDecisionSignal(
+            decision="selected", selected_candidate=cfg_A, selected_edge_id="edge_01",
+            selected_representation_id="360p", target_resolution="720p", model_id="tinysr", scale=2, device="cpu",
+            fuzzy_suitability=80.0, suitability_tier="high", min_suitability_threshold=35.0, candidate_evaluations=[],
+            rejected_candidates=[], input_signal_provenance={}, rule_inference_metadata={}, warnings=[]
+        )
+        runtime.execution_handler = lambda c: {"bytes_received": 1000, "total_chunk_completion_time": 0.05, "download_transfer_time": 0.04, "sr_processing_time": 0.01, "edge_id": "edge_01", "cluster_id": "c1", "request_id": "r0"}
+        t0 = runtime.process_chunk("0000")
+        assert t0.delivery_mode == "sr"
+        state_A = runtime.state.current_executed_state
+
+    # Chunk 1 (N+1): SR-B fails
+    cfg_B = {"edge_id": "edge_02", "base_representation_id": "480p", "target_resolution": "1080p", "model_id": "tinysr", "scale": 2, "device": "cuda"}
+    with patch.object(FuzzyAdaptiveDecisionEngine, "evaluate_candidates") as mock_eval:
+        mock_eval.return_value = FuzzyDecisionSignal(
+            decision="selected", selected_candidate=cfg_B, selected_edge_id="edge_02",
+            selected_representation_id="480p", target_resolution="1080p", model_id="tinysr", scale=2, device="cuda",
+            fuzzy_suitability=85.0, suitability_tier="high", min_suitability_threshold=35.0, candidate_evaluations=[],
+            rejected_candidates=[], input_signal_provenance={}, rule_inference_metadata={}, warnings=[]
+        )
+        def failing_handler(c):
+            raise RuntimeError("CUDA OOM")
+        runtime.execution_handler = failing_handler
+        t1 = runtime.process_chunk("0001")
+        assert t1.delivery_mode == "execution_failed"
+        assert runtime.state.current_executed_state == state_A
+        assert runtime.state.previous_executed_state == state_A
+
+    # Chunk 2 (N+2): Fresh cycle, SR-C succeeds
+    cfg_C = {"edge_id": "edge_01", "base_representation_id": "480p", "target_resolution": "1080p", "model_id": "tinysr", "scale": 2, "device": "cpu"}
+    with patch.object(FuzzyAdaptiveDecisionEngine, "evaluate_candidates") as mock_eval:
+        mock_eval.return_value = FuzzyDecisionSignal(
+            decision="selected", selected_candidate=cfg_C, selected_edge_id="edge_01",
+            selected_representation_id="480p", target_resolution="1080p", model_id="tinysr", scale=2, device="cpu",
+            fuzzy_suitability=75.0, suitability_tier="high", min_suitability_threshold=35.0, candidate_evaluations=[],
+            rejected_candidates=[], input_signal_provenance={}, rule_inference_metadata={}, warnings=[]
+        )
+        runtime.execution_handler = lambda c: {"bytes_received": 1000, "total_chunk_completion_time": 0.05, "download_transfer_time": 0.04, "sr_processing_time": 0.01, "edge_id": "edge_01", "cluster_id": "c1", "request_id": "r2"}
+        t2 = runtime.process_chunk("0002")
+        assert t2.delivery_mode == "sr"
+        # Switched from SR-A to SR-C
+        assert runtime.state.configuration_switch_count == 1
+
+
+def test_quality_evidence_model_scale_device_mismatch_not_reused():
+    """Verify evidence is NOT reused when model/scale/device mismatch, resulting in quality_evaluable=False and candidate non-selectable."""
+    q_store = QualityEvidenceStore(
+        records=[{
+            "input_id": "synthetic_lowmotion_30fps",
+            "representation_id": "360p",
+            "model_id": "tinysr",
+            "scale": 2,
+            "device": "cpu",
+            "psnr": 38.0,
+            "ssim": 0.95,
+            "vmaf": 90.0,
+        }],
+        identity_map={("sample", "0000"): "synthetic_lowmotion_30fps"}
+    )
+
+    # Valid match -> found
+    rec_valid = q_store.lookup("sample", "0000", "360p", "tinysr", 2, "cpu")
+    assert rec_valid is not None
+    assert rec_valid["psnr"] == 38.0
+
+    # Model mismatch -> NOT reused
+    rec_model = q_store.lookup("sample", "0000", "360p", "other_model", 2, "cpu")
+    assert rec_model is None
+
+    # Device mismatch -> NOT reused
+    rec_dev = q_store.lookup("sample", "0000", "360p", "tinysr", 2, "cuda")
+    assert rec_dev is None
+
+    # Scale mismatch -> NOT reused
+    rec_scale = q_store.lookup("sample", "0000", "360p", "tinysr", 4, "cpu")
+    assert rec_scale is None
+
 
 

@@ -63,6 +63,7 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 - Native execution is resolved independently of Step 10 SR edge selection via `NativeDeliveryRegistry`.
 - Native fallback delivery maps the fallback representation to a native content delivery origin endpoint (`delivery_origin: "native_origin"`, `delivery_endpoint: ...`).
 - Native execution does not invent an SR `edge_id` or require model ID, scale factor, or hardware device (`model_id: null`, `scale: null`, `device: null`).
+- `native_origin` is a logical native content delivery source, not an adaptive SR edge-selection dimension.
 
 ### 2.4 Quality Evidence Coverage & Identity Bridge
 - Live runtime quality is available **ONLY** when matching precomputed Step 5.6 / Step 8 evidence exists in `QualityEvidenceStore`.
@@ -77,10 +78,11 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 - Wall-clock timestamps are explicitly named `request_start_unix_timestamp` and `completion_unix_timestamp`.
 - Server-reported diagnostic fields (`download_transfer_time`, `sr_processing_time`) are retained strictly for diagnostic breakdown telemetry and are **NOT** additive with `client_elapsed_seconds`.
 
-### 2.6 Requested vs. Executed State
+### 2.6 Requested vs. Executed State & Post-Execution-Failure Policy
 - Tracks both `requested_configuration` and `executed_configuration`.
 - `delivery_mode`: `"sr"` | `"native"` | `"execution_failed"`.
 - A requested SR configuration is **NOT** recorded as executed if Step 6 execution fails (`executed_configuration = null`).
+- **Post-Execution-Failure Policy**: When Step 6 execution fails, `delivery_mode = execution_failed`, `executed_configuration = null`, and `previous_executed_state` remains unchanged from the last successful execution. The runtime does not silently retry or substitute another configuration. The next chunk starts a fresh observation → Steps 7–10 decision cycle using current telemetry.
 
 ### 2.7 Configuration Switch Tracking
 - Counts changes between consecutive **EXECUTED** delivery states:
@@ -214,6 +216,7 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
   }
 }
 ```
+*Note: The native fallback telemetry example above is abbreviated for clarity; top-level identity, network, timing, resource, and provenance records remain present in machine-readable chunk telemetry.*
 
 ### 3.3 Execution Failure Telemetry Example
 ```json
@@ -259,12 +262,12 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 
 ### Actual Terminal Output Summary
 ```
-====================== 108 passed, 1 warning in 6.24s ======================
+====================== 111 passed, 1 warning in 6.42s ======================
 ```
 
-- **Step 11 Integration Suite (`tests/test_end_to_end_runtime.py`)**: 31 / 31 Passed (Tests A–N + 17 Hardening Semantic Patch Tests).
+- **Step 11 Integration Suite (`tests/test_end_to_end_runtime.py`)**: 34 / 34 Passed (Tests A–N + 20 Hardening Verification Tests).
 - **Frozen Steps 0–10 Core Regression Suite**: 77 / 77 Passed.
-- **Total Regression Suite**: 108 / 108 Passed (0 Failed, 0 Skipped).
+- **Total Regression Suite**: 111 / 111 Passed (0 Failed, 0 Skipped).
 
 ---
 
@@ -273,4 +276,4 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 - **Browser/VLC Player Interaction**: Step 11 uses a mathematical client buffer simulation model based on monotonic elapsed time.
 - **Hysteresis / Stability Control**: Step 11 measures raw decision behavior. Hysteresis and stability smoothing are deferred to Step 12.
 - **Ablation & Final Baselines**: Experimental campaigns, baseline comparisons (e.g. heuristic ABR vs. Fuzzy AdaptiveSR), and QoE trade-off analysis belong to Step 12.
-s belong to Step 12.
+
