@@ -1,4 +1,4 @@
-# STEP 11 — END-TO-END REAL-TIME ADAPTIVESR IMPLEMENTATION (HARDENED)
+# STEP 11 — END-TO-END ADAPTIVESR STREAMING RUNTIME
 
 ## 1. System Architecture
 
@@ -56,17 +56,19 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
   - Replenishment formula: `buffer_after = max(0.0, buffer_before - client_elapsed_seconds) + chunk_duration`.
 
 ### 2.2 Final Decision Eligibility
-- Preserves the selected candidate's `decision_eligible` explicitly in the final decision telemetry record (`decision.decision_eligible: bool`).
-- Upstream provenance is retained without recomputing eligibility.
+- Preserves the selected candidate's `decision_eligible` explicitly in the final decision telemetry record when an SR candidate is selected (`decision.decision_eligible: bool`).
+- When no SR candidate is selected (`no_suitable_candidate` / `no_feasible_candidates`), `decision.decision_eligible` is `null` (not `false`), because no evaluated SR candidate exists to which the candidate eligibility value applies.
 
-### 2.3 Native Executed Configuration
-- Native execution telemetry schema explicitly uses `null` for SR-specific fields (`model_id: null`, `scale: null`, `device: null`).
-- Native execution does not require model ID, scale factor, or target hardware device.
+### 2.3 Native Fallback Delivery Path
+- Native execution is resolved independently of Step 10 SR edge selection via `NativeDeliveryRegistry`.
+- Native fallback delivery maps the fallback representation to a native content delivery origin endpoint (`delivery_origin: "native_origin"`, `delivery_endpoint: ...`).
+- Native execution does not invent an SR `edge_id` or require model ID, scale factor, or hardware device (`model_id: null`, `scale: null`, `device: null`).
 
-### 2.4 Quality Evidence Coverage & Boundary
+### 2.4 Quality Evidence Coverage & Identity Bridge
 - Live runtime quality is available **ONLY** when matching precomputed Step 5.6 / Step 8 evidence exists in `QualityEvidenceStore`.
-- Evidence is matched by explicit identity/provenance: `(video_id, chunk_id, representation_id, model_id, scale, device)`.
-- No matching evidence $\implies$ `quality_evaluable = false`, candidate remains non-selectable.
+- Provides an explicit identity bridge mapping runtime `(video_id, chunk_id)` to Step 5.6 benchmark dataset `input_id`.
+- Evidence is matched by explicit identity/provenance: `(input_id, representation_id, model_id, scale, device)`.
+- If no deterministic evidence mapping exists $\implies$ `quality_evaluable = false`, metrics = `null`, candidate remains non-selectable.
 - Live streaming does NOT fabricate PSNR/SSIM/VMAF or imply reference high-resolution video data exists during live playback.
 
 ### 2.5 Clock Semantics
@@ -82,13 +84,13 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 
 ### 2.7 Configuration Switch Tracking
 - Counts changes between consecutive **EXECUTED** delivery states:
-  - Native state: `("native", edge_id, representation_id)`
+  - Native state: `("native", "native_origin", representation_id)`
   - SR state: `("sr", edge_id, representation_id, model_id, scale, device)`
 - Explicitly tracks `SR → native` and `native → SR` transitions. Failed requests do not alter executed state.
 
-### 2.8 Edge Routing
-- `EdgeRegistry` maps `edge_id` to its HTTP endpoint URL (`edge_id -> endpoint_url`).
-- Step 10 handles logical edge selection (`edge_id`); Step 11 resolves `edge_id` to HTTP endpoint.
+### 2.8 Edge Routing & Native Delivery
+- `EdgeRegistry` maps `edge_id` to its HTTP SR endpoint URL (`edge_id -> endpoint_url`).
+- `NativeDeliveryRegistry` maps fallback representations to native content origin endpoints (`representation_id -> endpoint_url`).
 
 ### 2.9 Dynamic Test Conditions
 - `DynamicConditionProfile` is test-only and active only when `enabled = true`.
@@ -185,7 +187,8 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
   "delivery_mode": "native",
   "requested_configuration": null,
   "executed_configuration": {
-    "edge_id": "edge_01",
+    "delivery_origin": "native_origin",
+    "delivery_endpoint": "http://localhost:8000/cloud/videos/sample/360p",
     "representation_id": "360p",
     "target_resolution": "360p",
     "model_id": null,
@@ -199,7 +202,7 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
     "rejection_reason": "No candidate met feasibility or suitability threshold",
     "fallback_reason": "no_suitable_candidate",
     "min_suitability_threshold": 35.0,
-    "decision_eligible": false
+    "decision_eligible": null
   },
   "buffer": {
     "buffer_before": 1.0,
@@ -222,7 +225,7 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
     "target_resolution": "720p",
     "model_id": "tinysr",
     "scale": 2,
-    "device": "cpu"
+    "device": "cuda"
   },
   "executed_configuration": null,
   "decision": {
@@ -256,15 +259,18 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 
 ### Actual Terminal Output Summary
 ```
-====================== 104 passed, 1 warning in 5.92s ======================
+====================== 108 passed, 1 warning in 6.24s ======================
 ```
 
-- **Step 11 Integration Suite (`tests/test_end_to_end_runtime.py`)**: 27 / 27 Passed (Tests A–N + 13 Hardening Regression Tests).
+- **Step 11 Integration Suite (`tests/test_end_to_end_runtime.py`)**: 31 / 31 Passed (Tests A–N + 17 Hardening Semantic Patch Tests).
 - **Frozen Steps 0–10 Core Regression Suite**: 77 / 77 Passed.
-- **Total Regression Suite**: 104 / 104 Passed (0 Failed, 0 Skipped).
+- **Total Regression Suite**: 108 / 108 Passed (0 Failed, 0 Skipped).
+
+---
 
 ## 5. Known Limitations
 
 - **Browser/VLC Player Interaction**: Step 11 uses a mathematical client buffer simulation model based on monotonic elapsed time.
 - **Hysteresis / Stability Control**: Step 11 measures raw decision behavior. Hysteresis and stability smoothing are deferred to Step 12.
 - **Ablation & Final Baselines**: Experimental campaigns, baseline comparisons (e.g. heuristic ABR vs. Fuzzy AdaptiveSR), and QoE trade-off analysis belong to Step 12.
+s belong to Step 12.

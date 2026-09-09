@@ -789,16 +789,28 @@ def test_failed_sr_request_cannot_increase_playback_buffer():
 
 
 def test_native_fallback_executed_configuration_null_fields():
-    """Verify native fallback executed configuration omits / sets null for SR-specific fields."""
+    """Verify native fallback executed configuration omits / sets null for SR-specific fields and uses NativeDeliveryRegistry."""
     runtime = AdaptiveSRRuntime(video_id="sample", min_suitability_threshold=99.0)
     telemetry = runtime.process_chunk("0000")
 
     assert telemetry.delivery_mode == "native"
     exec_cfg = telemetry.executed_configuration
+    assert exec_cfg["delivery_origin"] == "native_origin"
+    assert "delivery_endpoint" in exec_cfg
     assert exec_cfg["representation_id"] == "360p"
     assert exec_cfg["model_id"] is None
     assert exec_cfg["scale"] is None
     assert exec_cfg["device"] is None
+    assert telemetry.identity.edge_id == "native_origin"
+
+
+def test_no_sr_candidate_selected_decision_eligible_is_none():
+    """Verify when no SR candidate is selected, decision.decision_eligible is None (not False)."""
+    runtime = AdaptiveSRRuntime(video_id="sample", min_suitability_threshold=99.0)
+    telemetry = runtime.process_chunk("0000")
+
+    assert telemetry.decision.decision in ["no_suitable_candidate", "no_feasible_candidates"]
+    assert telemetry.decision.decision_eligible is None
 
 
 def test_final_decision_eligible_preserved_in_decision_telemetry():
@@ -808,4 +820,102 @@ def test_final_decision_eligible_preserved_in_decision_telemetry():
 
     assert telemetry.decision.decision == "selected"
     assert telemetry.decision.decision_eligible is True
+
+
+def test_quality_evidence_identity_mismatch_results_in_unevaluable_quality():
+    """Verify quality evidence store identity mismatch results in quality_evaluable=False and candidate non-selectable."""
+    # Identity map with NO entry for ("sample", "0000") and no records
+    unmapped_q_store = QualityEvidenceStore(records=[], identity_map={})
+    runtime = AdaptiveSRRuntime(video_id="sample", quality_store=unmapped_q_store)
+    telemetry = runtime.process_chunk("0000")
+
+    assert telemetry.provenance.bitrate_signal_provenance["quality_evaluable"] is False
+    # Without quality evidence, SR candidate is non-selectable; enters native fallback
+    assert telemetry.delivery_mode == "native"
+    assert telemetry.decision.decision in ["no_suitable_candidate", "no_feasible_candidates"]
+
+
+def test_failed_sr_request_preserves_previous_executed_state():
+    """Verify a failed SR request does not replace or corrupt the previous successful executed state."""
+    runtime = AdaptiveSRRuntime(video_id="sample")
+
+    # Chunk 0: Successful SR execution
+    t0 = runtime.process_chunk("0000", observed_network_mbps=20.0)
+    assert t0.delivery_mode == "sr"
+    prev_executed = runtime.state.current_executed_state
+    assert prev_executed is not None
+
+    # Chunk 1: SR execution fails
+    selected_cfg = {
+        "edge_id": "edge_01",
+        "base_representation_id": "360p",
+        "target_resolution": "720p",
+        "model_id": "tinysr",
+        "scale": 2,
+        "device": "cpu",
+    }
+    def failing_handler(c):
+        raise RuntimeError("SR Model execution failed")
+
+    with patch.object(FuzzyAdaptiveDecisionEngine, "evaluate_candidates") as mock_eval:
+        mock_eval.return_value = FuzzyDecisionSignal(
+            decision="selected",
+            selected_candidate=selected_cfg,
+            selected_edge_id="edge_01",
+            selected_representation_id="360p",
+            target_resolution="720p",
+            model_id="tinysr",
+            scale=2,
+            device="cpu",
+            fuzzy_suitability=80.0,
+            suitability_tier="high",
+            min_suitability_threshold=35.0,
+            candidate_evaluations=[],
+            rejected_candidates=[],
+            input_signal_provenance={},
+            rule_inference_metadata={},
+            warnings=[],
+        )
+        runtime.execution_handler = failing_handler
+        t1 = runtime.process_chunk("0001")
+
+        assert t1.delivery_mode == "execution_failed"
+        # Executed state remains preserved from Chunk 0
+        assert runtime.state.previous_executed_state == prev_executed
+        assert runtime.state.current_executed_state == prev_executed
+
+
+def test_cumulative_stall_accounting_across_multiple_failed_stalled_chunks():
+    """Verify stall count and total stall duration accumulate correctly across multiple stalled/failed chunks."""
+    runtime = AdaptiveSRRuntime(video_id="sample", initial_buffer_seconds=0.05)
+
+    def slow_handler(c):
+        time.sleep(0.15)
+        return {
+            "bytes_received": 50000,
+            "total_chunk_completion_time": 0.15,
+            "download_transfer_time": 0.15,
+            "sr_processing_time": 0.0,
+            "edge_id": "edge_01",
+            "cluster_id": "cluster_01",
+            "request_id": "req_stall",
+        }
+
+    runtime.execution_handler = slow_handler
+
+    # Chunk 0: Stalls (0.05s buffer, ~0.15s elapsed -> ~0.10s stall)
+    t0 = runtime.process_chunk("0000", chunk_duration=0.01)  # small chunk duration so buffer stays near zero
+    assert t0.buffer.stall_count == 1
+    assert t0.buffer.stall_duration > 0.0
+    assert runtime.state.stall_count == 1
+
+    stall_dur_0 = runtime.state.total_stall_duration
+
+    # Chunk 1: Stalls again (~0.15s elapsed -> ~0.15s stall)
+    t1 = runtime.process_chunk("0001", chunk_duration=0.01)
+    assert t1.buffer.stall_count == 2
+    assert t1.buffer.stall_duration > 0.0
+    assert runtime.state.stall_count == 2
+    assert runtime.state.total_stall_duration > stall_dur_0
+
 

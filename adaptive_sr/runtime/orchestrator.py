@@ -39,11 +39,23 @@ class QualityEvidenceStore:
     """
     Precomputed quality evidence store (originating from Step 5.6 / Step 8 benchmarks).
     Step 11 consumes precomputed quality evidence matching identity & provenance.
+    Provides an explicit identity bridge mapping runtime (video_id, chunk_id) -> Step 5.6 benchmark input_id.
     If no valid matching evidence exists, quality_evaluable is false; quality values are never fabricated.
     """
 
-    def __init__(self, records: Optional[List[Dict[str, Any]]] = None):
-        self.evidence: Dict[Tuple[str, str, str, str, int, str], Dict[str, Any]] = {}
+    def __init__(
+        self,
+        records: Optional[List[Dict[str, Any]]] = None,
+        identity_map: Optional[Dict[Tuple[str, str], str]] = None,
+    ):
+        self.evidence: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+        # Explicit identity bridge mapping runtime (video_id, chunk_id) -> Step 5.6 benchmark input_id
+        self.identity_map: Dict[Tuple[str, str], str] = identity_map if identity_map is not None else {
+            ("*", "*"): "*",
+            ("sample", "0000"): "synthetic_lowmotion_30fps",
+            ("sample", "0001"): "synthetic_lowmotion_30fps",
+            ("sample", "0002"): "synthetic_lowmotion_30fps",
+        }
         if records is not None:
             for rec in records:
                 self.add_record(rec)
@@ -55,8 +67,7 @@ class QualityEvidenceStore:
         for rep in ["360p", "480p"]:
             for dev in ["cpu", "cuda"]:
                 store.add_record({
-                    "video_id": "*",
-                    "chunk_id": "*",
+                    "input_id": "*",
                     "representation_id": rep,
                     "model_id": "tinysr",
                     "scale": 2,
@@ -70,15 +81,18 @@ class QualityEvidenceStore:
         return store
 
     def add_record(self, record: Dict[str, Any]):
-        key = (
-            str(record.get("video_id", "*")),
-            str(record.get("chunk_id", "*")),
-            str(record.get("representation_id", record.get("candidate_representation_id", "360p"))),
-            str(record.get("model_id", "tinysr")),
-            int(record.get("scale", 2)),
-            str(record.get("device", "cpu")).lower(),
-        )
-        self.evidence[key] = record
+        ident = str(record.get("input_id", record.get("video_id", "*")))
+        chunk = str(record.get("chunk_id", "*"))
+        rep = str(record.get("representation_id", record.get("candidate_representation_id", "360p")))
+        model = str(record.get("model_id", "tinysr"))
+        scale = int(record.get("scale", 2))
+        dev = str(record.get("device", "cpu")).lower()
+
+        key1 = (ident, rep, model, scale, dev)
+        self.evidence[key1] = record
+
+        key2 = (ident, chunk, rep, model, scale, dev)
+        self.evidence[key2] = record
 
     def lookup(
         self,
@@ -90,18 +104,31 @@ class QualityEvidenceStore:
         device: str,
     ) -> Optional[Dict[str, Any]]:
         dev = str(device).lower()
-        # 1. Exact match (video_id, chunk_id, rep, model, scale, device)
-        k1 = (video_id, chunk_id, representation_id, model_id, scale, dev)
-        if k1 in self.evidence:
-            return self.evidence[k1]
-        # 2. Wildcard chunk_id
-        k2 = (video_id, "*", representation_id, model_id, scale, dev)
-        if k2 in self.evidence:
-            return self.evidence[k2]
-        # 3. Wildcard all
-        k3 = ("*", "*", representation_id, model_id, scale, dev)
-        if k3 in self.evidence:
-            return self.evidence[k3]
+        # 1. Exact match by (video_id, chunk_id, rep, model, scale, dev)
+        k_exact = (video_id, chunk_id, representation_id, model_id, scale, dev)
+        if k_exact in self.evidence:
+            return self.evidence[k_exact]
+        k_vid_star = (video_id, "*", representation_id, model_id, scale, dev)
+        if k_vid_star in self.evidence:
+            return self.evidence[k_vid_star]
+
+        # 2. Resolve runtime (video_id, chunk_id) -> Step 5.6 benchmark input_id via identity_map
+        input_id = self.identity_map.get((video_id, chunk_id))
+        if not input_id:
+            input_id = self.identity_map.get((video_id, "*"))
+        if not input_id:
+            input_id = self.identity_map.get(("*", "*"))
+
+        if input_id:
+            k_input = (input_id, representation_id, model_id, scale, dev)
+            if k_input in self.evidence:
+                return self.evidence[k_input]
+
+        # 3. Global wildcard
+        k_star = ("*", representation_id, model_id, scale, dev)
+        if k_star in self.evidence:
+            return self.evidence[k_star]
+
         return None
 
 
@@ -125,6 +152,26 @@ class EdgeRegistry:
         if edge_id not in self.endpoints:
             return "http://localhost:8001"
         return self.endpoints[edge_id]
+
+
+class NativeDeliveryRegistry:
+    """
+    Runtime Native Delivery Registry mapping fallback native representations to native content delivery origin endpoints.
+    Step 10 handles logical SR edge selection; Native fallback delivery is resolved independently.
+    """
+
+    def __init__(self, endpoints: Optional[Dict[str, str]] = None):
+        self.endpoints: Dict[str, str] = endpoints or {
+            "360p": "http://localhost:8000/cloud/videos/sample/360p",
+            "480p": "http://localhost:8000/cloud/videos/sample/480p",
+            "default": "http://localhost:8000/cloud",
+        }
+
+    def register(self, representation_id: str, endpoint_url: str):
+        self.endpoints[representation_id] = endpoint_url
+
+    def resolve(self, representation_id: str) -> str:
+        return self.endpoints.get(representation_id, self.endpoints.get("default", "http://localhost:8000/cloud"))
 
 
 class DynamicConditionProfile:
@@ -193,6 +240,7 @@ class AdaptiveSRRuntime:
         min_suitability_threshold: float = 35.0,
         initial_buffer_seconds: float = 0.0,
         edge_registry: Optional[EdgeRegistry] = None,
+        native_registry: Optional[NativeDeliveryRegistry] = None,
         quality_store: Optional[QualityEvidenceStore] = None,
         execution_handler: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         dynamic_profile: Optional[DynamicConditionProfile] = None,
@@ -205,6 +253,7 @@ class AdaptiveSRRuntime:
         self._min_suitability_threshold = min_suitability_threshold
 
         self.edge_registry = edge_registry or EdgeRegistry()
+        self.native_registry = native_registry or NativeDeliveryRegistry()
         self.quality_store = quality_store if quality_store is not None else QualityEvidenceStore.with_defaults()
         self.fps_adapter = FPSAdapter()
         self.bitrate_adapter = BitrateAdapter()
@@ -267,6 +316,44 @@ class AdaptiveSRRuntime:
             "endpoint_url": endpoint_url,
             "cluster_id": headers.get("X-Cluster-ID", CLUSTER_ID),
             "request_id": headers.get("X-Request-ID", str(uuid.uuid4())),
+        }
+
+    def _default_execute_native(
+        self,
+        chunk_id: str,
+        representation_id: str,
+        endpoint_url: str,
+    ) -> Dict[str, Any]:
+        """
+        Default native content delivery path fetching un-upscaled chunk from Native origin.
+        """
+        client = TestClient(edge_app)
+        url = f"/videos/{self.video_id}/chunks/{chunk_id}"
+        params = {
+            "representation_id": representation_id,
+            "sr_requested": "false",
+        }
+
+        t0 = time.monotonic()
+        response = client.get(url, params=params)
+        t_elapsed = time.monotonic() - t0
+
+        if response.status_code != 200:
+            err_msg = response.json().get("detail", f"HTTP {response.status_code}")
+            raise RuntimeError(f"Native content delivery failed: {err_msg}")
+
+        bytes_received = len(response.content)
+
+        return {
+            "status_code": response.status_code,
+            "bytes_received": bytes_received,
+            "total_chunk_completion_time": t_elapsed,
+            "download_transfer_time": t_elapsed,
+            "sr_processing_time": 0.0,
+            "delivery_origin": "native_origin",
+            "delivery_endpoint": endpoint_url,
+            "cluster_id": CLUSTER_ID,
+            "request_id": response.headers.get("X-Request-ID", str(uuid.uuid4())),
         }
 
     def process_chunk(
@@ -371,7 +458,7 @@ class AdaptiveSRRuntime:
                                 )
                                 fps_signals.append(fps_sig)
 
-                                # Look up precomputed quality evidence from Step 5.6/8 store
+                                # Look up precomputed quality evidence from Step 5.6/8 store using identity bridge
                                 q_rec = self.quality_store.lookup(
                                     video_id=self.video_id,
                                     chunk_id=chunk_id,
@@ -384,7 +471,7 @@ class AdaptiveSRRuntime:
                                 psnr_val = q_rec.get("psnr") if q_rec else None
                                 ssim_val = q_rec.get("ssim") if q_rec else None
                                 vmaf_val = q_rec.get("vmaf") if q_rec else None
-                                q_prov = q_rec.get("quality_provenance", "precomputed_step5.6") if q_rec else "unmeasured"
+                                q_prov = q_rec.get("quality_provenance", "step5.6_benchmark") if q_rec else "unmeasured"
                                 d_elig = q_rec.get("decision_eligible", True) if q_rec else True
 
                                 bit_sig = self.bitrate_adapter.evaluate(
@@ -471,7 +558,7 @@ class AdaptiveSRRuntime:
                 decision_telemetry.rejection_reason = str(e)
 
         else:
-            # Decision failure -> Native Fallback Execution
+            # Decision failure -> Native Fallback Execution via NativeDeliveryRegistry
             fallback_reason = fuzzy_decision.decision
             decision_telemetry = DecisionTelemetry(
                 decision=fuzzy_decision.decision,
@@ -480,16 +567,17 @@ class AdaptiveSRRuntime:
                 rejection_reason="No candidate met feasibility or suitability threshold",
                 fallback_reason=fallback_reason,
                 min_suitability_threshold=self.min_suitability_threshold,
-                decision_eligible=False,
+                decision_eligible=None,  # No candidate selected; decision_eligible is None
             )
             requested_conf = None
-            fallback_edge = self.edge_nodes[0]
             fallback_rep = self.fallback_representation_id
+            native_endpoint = self.native_registry.resolve(fallback_rep)
 
             try:
                 if self.execution_handler:
                     execution_result = self.execution_handler({
-                        "edge_id": fallback_edge,
+                        "delivery_origin": "native_origin",
+                        "delivery_endpoint": native_endpoint,
                         "base_representation_id": fallback_rep,
                         "sr_requested": False,
                         "model_id": None,
@@ -497,25 +585,22 @@ class AdaptiveSRRuntime:
                         "device": None,
                     })
                 else:
-                    execution_result = self._default_execute_chunk(
+                    execution_result = self._default_execute_native(
                         chunk_id=chunk_id,
-                        edge_id=fallback_edge,
                         representation_id=fallback_rep,
-                        sr_requested=False,
-                        model_id=None,
-                        scale=1,
-                        device="cpu",
+                        endpoint_url=native_endpoint,
                     )
                 delivery_mode = "native"
                 executed_conf = {
-                    "edge_id": fallback_edge,
+                    "delivery_origin": "native_origin",
+                    "delivery_endpoint": native_endpoint,
                     "representation_id": fallback_rep,
                     "target_resolution": fallback_rep,
                     "model_id": None,
                     "scale": None,
                     "device": None,
                 }
-                curr_executed_state = ("native", fallback_edge, fallback_rep)
+                curr_executed_state = ("native", "native_origin", fallback_rep)
 
             except Exception as e:
                 delivery_mode = "execution_failed"
@@ -570,7 +655,11 @@ class AdaptiveSRRuntime:
 
         # Step 7: Construct Machine-Readable Telemetry Record
         req_id = execution_result.get("request_id", str(uuid.uuid4())) if execution_result else str(uuid.uuid4())
-        edge_id_resp = execution_result.get("edge_id", self.edge_nodes[0]) if execution_result else self.edge_nodes[0]
+        edge_id_resp = (
+            execution_result.get("edge_id", self.edge_nodes[0])
+            if (execution_result and delivery_mode == "sr")
+            else (execution_result.get("delivery_origin", "native_origin") if execution_result else "native_origin")
+        )
         download_time = execution_result.get("download_transfer_time", 0.0) if execution_result else 0.0
         sr_time = execution_result.get("sr_processing_time", 0.0) if execution_result else 0.0
 

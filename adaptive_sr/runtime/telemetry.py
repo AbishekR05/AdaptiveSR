@@ -43,7 +43,7 @@ class DecisionTelemetry:
     rejection_reason: Optional[str] = None
     fallback_reason: Optional[str] = None
     min_suitability_threshold: float = 35.0
-    decision_eligible: Optional[bool] = True
+    decision_eligible: Optional[bool] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
