@@ -554,8 +554,7 @@ class AdaptiveSRRuntime:
                     error_message=str(e),
                     traceback_available=True,
                 )
-                decision_telemetry.decision = "execution_failed"
-                decision_telemetry.rejection_reason = str(e)
+                # Note: decision_telemetry.decision remains "selected" and rejection_reason remains None
 
         else:
             # Decision failure -> Native Fallback Execution via NativeDeliveryRegistry
@@ -655,11 +654,10 @@ class AdaptiveSRRuntime:
 
         # Step 7: Construct Machine-Readable Telemetry Record
         req_id = execution_result.get("request_id", str(uuid.uuid4())) if execution_result else str(uuid.uuid4())
-        edge_id_resp = (
-            execution_result.get("edge_id", self.edge_nodes[0])
-            if (execution_result and delivery_mode == "sr")
-            else (execution_result.get("delivery_origin", "native_origin") if execution_result else "native_origin")
-        )
+        if delivery_mode in ("sr", "execution_failed") and sel is not None:
+            edge_id_resp = execution_result.get("edge_id", sel["edge_id"]) if (execution_result and "edge_id" in execution_result) else sel["edge_id"]
+        else:
+            edge_id_resp = None
         download_time = execution_result.get("download_transfer_time", 0.0) if execution_result else 0.0
         sr_time = execution_result.get("sr_processing_time", 0.0) if execution_result else 0.0
 

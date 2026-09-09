@@ -16,7 +16,7 @@ class ChunkIdentity:
     video_id: str
     chunk_id: str
     request_id: str
-    edge_id: str
+    edge_id: Optional[str]
     cluster_id: str
 
     def to_dict(self) -> Dict[str, Any]:

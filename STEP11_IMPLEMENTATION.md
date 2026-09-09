@@ -186,6 +186,13 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 ### 3.2 Native Fallback Execution Telemetry Example
 ```json
 {
+  "identity": {
+    "video_id": "sample",
+    "chunk_id": "0000",
+    "request_id": "8f3b2a19-...",
+    "edge_id": null,
+    "cluster_id": "cluster_01"
+  },
   "delivery_mode": "native",
   "requested_configuration": null,
   "executed_configuration": {
@@ -216,7 +223,7 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
   }
 }
 ```
-*Note: The native fallback telemetry example above is abbreviated for clarity; top-level identity, network, timing, resource, and provenance records remain present in machine-readable chunk telemetry.*
+*Note: Native delivery explicitly represents `edge_id = null`, keeping native origin independent of SR EdgeRegistry candidate selection.*
 
 ### 3.3 Execution Failure Telemetry Example
 ```json
@@ -232,10 +239,10 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
   },
   "executed_configuration": null,
   "decision": {
-    "decision": "execution_failed",
+    "decision": "selected",
     "fuzzy_suitability": 80.0,
     "suitability_tier": "high",
-    "rejection_reason": "Edge GPU out of memory",
+    "rejection_reason": null,
     "fallback_reason": null,
     "min_suitability_threshold": 35.0,
     "decision_eligible": true
@@ -262,12 +269,12 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 
 ### Actual Terminal Output Summary
 ```
-====================== 111 passed, 1 warning in 6.42s ======================
+====================== 112 passed, 1 warning in 5.89s ======================
 ```
 
-- **Step 11 Integration Suite (`tests/test_end_to_end_runtime.py`)**: 34 / 34 Passed (Tests A–N + 20 Hardening Verification Tests).
+- **Step 11 Integration Suite (`tests/test_end_to_end_runtime.py`)**: 35 / 35 Passed (Tests A–N + 21 Hardening Verification Tests).
 - **Frozen Steps 0–10 Core Regression Suite**: 77 / 77 Passed.
-- **Total Regression Suite**: 111 / 111 Passed (0 Failed, 0 Skipped).
+- **Total Step 11 + Runtime Regression Suite**: 112 / 112 Passed (0 Failed, 0 Skipped).
 
 ---
 
@@ -275,5 +282,5 @@ Step 11 builds the end-to-end closed-loop AdaptiveSR streaming runtime operating
 
 - **Browser/VLC Player Interaction**: Step 11 uses a mathematical client buffer simulation model based on monotonic elapsed time.
 - **Hysteresis / Stability Control**: Step 11 measures raw decision behavior. Hysteresis and stability smoothing are deferred to Step 12.
-- **Ablation & Final Baselines**: Experimental campaigns, baseline comparisons (e.g. heuristic ABR vs. Fuzzy AdaptiveSR), and QoE trade-off analysis belong to Step 12.
+- **Ablation & Final Baselines**: Experimental campaigns, baseline comparisons (e.g. heuristic ABR vs. Fuzzy AdaptiveSR), and QoE trade-off analysis belongs to Step 12.
 

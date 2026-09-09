@@ -685,8 +685,74 @@ def test_failed_requested_sr_not_recorded_as_executed():
         telemetry = runtime.process_chunk("0000")
 
         assert telemetry.delivery_mode == "execution_failed"
+        assert telemetry.decision.decision == "selected"
+        assert telemetry.decision.rejection_reason is None
+        assert telemetry.error is not None
+        assert telemetry.error.error_code == "STEP6_EXECUTION_FAILED"
         assert telemetry.requested_configuration is not None
         assert telemetry.executed_configuration is None
+
+
+def test_step10_candidate_selected_step6_execution_failed_semantics():
+    """Regression test: Step 10 candidate selected -> Step 6 execution fails
+    - decision.decision == 'selected'
+    - Step 6 fails
+    - delivery_mode == 'execution_failed'
+    - rejection_reason == None
+    - error.error_code == STEP6_EXECUTION_FAILED
+    - executed_configuration == None
+    - previous executed state unchanged
+    """
+    runtime = AdaptiveSRRuntime(video_id="sample")
+
+    # Chunk 0: Successful SR execution
+    t0 = runtime.process_chunk("0000", observed_network_mbps=20.0)
+    assert t0.delivery_mode == "sr"
+    prev_executed = runtime.state.current_executed_state
+
+    # Chunk 1: Selected candidate but Step 6 fails
+    selected_cfg = {
+        "edge_id": "edge_01",
+        "base_representation_id": "360p",
+        "target_resolution": "720p",
+        "model_id": "tinysr",
+        "scale": 2,
+        "device": "cpu",
+    }
+    def failing_handler(c):
+        raise RuntimeError("GPU OOM during inference")
+
+    with patch.object(FuzzyAdaptiveDecisionEngine, "evaluate_candidates") as mock_eval:
+        mock_eval.return_value = FuzzyDecisionSignal(
+            decision="selected",
+            selected_candidate=selected_cfg,
+            selected_edge_id="edge_01",
+            selected_representation_id="360p",
+            target_resolution="720p",
+            model_id="tinysr",
+            scale=2,
+            device="cpu",
+            fuzzy_suitability=80.0,
+            suitability_tier="high",
+            min_suitability_threshold=35.0,
+            candidate_evaluations=[],
+            rejected_candidates=[],
+            input_signal_provenance={},
+            rule_inference_metadata={},
+            warnings=[],
+        )
+        runtime.execution_handler = failing_handler
+        t1 = runtime.process_chunk("0001")
+
+        assert t1.delivery_mode == "execution_failed"
+        assert t1.decision.decision == "selected"
+        assert t1.decision.rejection_reason is None
+        assert t1.error is not None
+        assert t1.error.error_code == "STEP6_EXECUTION_FAILED"
+        assert t1.error.error_message == "GPU OOM during inference"
+        assert t1.executed_configuration is None
+        assert runtime.state.previous_executed_state == prev_executed
+        assert runtime.state.current_executed_state == prev_executed
 
 
 def test_edge_id_resolves_to_correct_http_endpoint():
@@ -802,7 +868,7 @@ def test_native_fallback_executed_configuration_null_fields():
     assert exec_cfg["model_id"] is None
     assert exec_cfg["scale"] is None
     assert exec_cfg["device"] is None
-    assert telemetry.identity.edge_id == "native_origin"
+    assert telemetry.identity.edge_id is None
 
 
 def test_no_sr_candidate_selected_decision_eligible_is_none():
