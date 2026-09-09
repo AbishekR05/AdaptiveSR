@@ -84,10 +84,15 @@ class EdgeResourceEvaluator:
         source_fps: float = 30.0,
         required_gpu_memory_bytes: Optional[int] = None,
         sr_processing_time_ms: Optional[float] = None,
-        measurement_provenance: str = "direct_measurement"
+        measurement_provenance: str = "direct_measurement",
+        max_cpu_utilization_percent: float = 95.0,
+        max_gpu_utilization_percent: float = 98.0,
     ) -> EdgeResourceSignal:
         """
         Evaluates resource capability and feasibility for a single Edge node.
+
+        Note: max_cpu_utilization_percent and max_gpu_utilization_percent are configurable
+        engineering/safety policy thresholds to prevent host overload, not universal scientific constants.
         """
         warnings: List[str] = []
         req_device = str(device).lower()
@@ -115,9 +120,9 @@ class EdgeResourceEvaluator:
                     warnings.append(
                         f"Insufficient free GPU memory on '{state.edge_id}': required {required_gpu_memory_bytes / 1e6:.1f} MB, free {state.gpu_memory_free_bytes / 1e6:.1f} MB."
                     )
-            elif state.gpu_utilization_percent is not None and state.gpu_utilization_percent >= 98.0:
+            elif state.gpu_utilization_percent is not None and state.gpu_utilization_percent >= max_gpu_utilization_percent:
                 resource_feasible = False
-                warnings.append(f"GPU on Edge node '{state.edge_id}' is overloaded ({state.gpu_utilization_percent:.1f}% utilization).")
+                warnings.append(f"GPU on Edge node '{state.edge_id}' is overloaded ({state.gpu_utilization_percent:.1f}% utilization >= safety limit {max_gpu_utilization_percent}%).")
 
         if not device_supported:
             resource_feasible = False
@@ -128,9 +133,9 @@ class EdgeResourceEvaluator:
             warnings.append(f"Requested SR model '{model_id}' is not supported by Edge node '{state.edge_id}'.")
 
         # CPU Utilization Overload Check
-        if state.cpu_utilization_percent is not None and state.cpu_utilization_percent >= 95.0:
+        if state.cpu_utilization_percent is not None and state.cpu_utilization_percent >= max_cpu_utilization_percent:
             resource_feasible = False
-            warnings.append(f"CPU on Edge node '{state.edge_id}' is overloaded ({state.cpu_utilization_percent:.1f}% utilization).")
+            warnings.append(f"CPU on Edge node '{state.edge_id}' is overloaded ({state.cpu_utilization_percent:.1f}% utilization >= safety limit {max_cpu_utilization_percent}%).")
 
         # 3. Network Feasibility Assessment
         network_feasible: Optional[bool] = None
@@ -215,8 +220,9 @@ class EdgeResourceEvaluator:
     ) -> List[EdgeResourceSignal]:
         """
         Evaluates a list of Edge candidate nodes.
-        Feasible nodes are returned first, ordered by resource availability.
-        No arbitrary weighted utility function is applied (Step 10 performs final decision).
+
+        Returns evaluated EdgeResourceSignal objects deterministically ordered by edge_id for predictable test output.
+        Does NOT rank candidates by preference or CPU utilization (Step 10 makes selection decisions).
         """
         signals = [
             cls.evaluate_node(
@@ -232,14 +238,8 @@ class EdgeResourceEvaluator:
             for cand in candidates
         ]
 
-        # Deterministic ordering: feasible nodes first, then by CPU utilization ascending
-        def sort_key(s: EdgeResourceSignal) -> Tuple[int, float]:
-            is_feas = 0 if s.resource_feasible else 1
-            cpu_util = s.resource_availability.get("cpu_utilization_percent")
-            cpu_val = cpu_util if cpu_util is not None else 50.0
-            return (is_feas, cpu_val)
-
-        return sorted(signals, key=sort_key)
+        # Stable deterministic output ordering by edge_id; non-preferential
+        return sorted(signals, key=lambda s: s.edge_id)
 
     @classmethod
     def evaluate_from_step6_telemetry(

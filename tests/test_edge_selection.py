@@ -127,7 +127,7 @@ def test_missing_network_telemetry():
     assert any("Network telemetry" in w for w in sig.warnings)
 
 
-# Test 8: Multiple Edge candidates evaluation & sorting
+# Test 8: Multiple Edge candidates evaluation & non-preferential stable sorting
 def test_multiple_edge_candidates():
     candidates = [
         EdgeResourceState(edge_id="edge_busy", cpu_utilization_percent=98.0),
@@ -136,13 +136,25 @@ def test_multiple_edge_candidates():
     ]
     signals = EdgeResourceEvaluator.evaluate_candidates(candidates, device="cpu")
     assert len(signals) == 3
-    # Feasible candidates first (idle: 15%, medium: 45%), infeasible candidate last (busy: 98%)
-    assert signals[0].edge_id == "edge_idle"
-    assert signals[0].resource_feasible is True
-    assert signals[1].edge_id == "edge_medium"
+    # Stable output ordering by edge_id alphabetically without CPU-utilization preference ranking
+    assert signals[0].edge_id == "edge_busy"
+    assert signals[0].resource_feasible is False
+    assert signals[1].edge_id == "edge_idle"
     assert signals[1].resource_feasible is True
-    assert signals[2].edge_id == "edge_busy"
-    assert signals[2].resource_feasible is False
+    assert signals[2].edge_id == "edge_medium"
+    assert signals[2].resource_feasible is True
+
+
+# Test 8b: Configurable resource safety thresholds
+def test_configurable_resource_thresholds():
+    state = EdgeResourceState(edge_id="edge_custom", cpu_utilization_percent=80.0)
+    # Default limit 95% -> feasible
+    sig_default = EdgeResourceEvaluator.evaluate_node(state=state, device="cpu")
+    assert sig_default.resource_feasible is True
+
+    # Custom safety limit 75% -> infeasible
+    sig_custom = EdgeResourceEvaluator.evaluate_node(state=state, device="cpu", max_cpu_utilization_percent=75.0)
+    assert sig_custom.resource_feasible is False
 
 
 # Test 9: Feasible vs infeasible candidates distinction

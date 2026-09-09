@@ -30,15 +30,18 @@ Step 9 strictly separates hardware capability from current resource utilization:
 
 ---
 
-## 2. Feasibility Evaluation & No Silent Fallback Rules
+## 2. Feasibility Evaluation & Safety Thresholds
 
 1. **Hardware & Model Compatibility**: Requested `device` and `model_id` must be explicitly supported by the candidate node.
-2. **CUDA Safety & Memory Check**: If `device="cuda"` is requested:
+2. **Configurable Operational Safety Thresholds**:
+   - Resource overload thresholds (`max_cpu_utilization_percent` defaulting to 95.0%, `max_gpu_utilization_percent` defaulting to 98.0%) are documented and treated as **configurable engineering/operational safety limits**, NOT universal scientific constants.
+   - `required_gpu_memory_bytes` is an explicit workload requirement derived from model runtime operational requirements rather than an invented static model constant.
+3. **CUDA Safety & Memory Check**: If `device="cuda"` is requested:
    - If `gpu_available == False`: `resource_feasible = false` (`feasibility_status = "infeasible"`). **NO silent fallback to CPU occurs.**
    - If `gpu_memory_free_bytes < required_gpu_memory_bytes`: `resource_feasible = false`.
-   - If `gpu_utilization_percent >= 98%`: `resource_feasible = false`.
-3. **CPU Utilization Check**: If `cpu_utilization_percent >= 95%`: `resource_feasible = false`.
-4. **Missing Telemetry Handling**: Missing load metrics remain `null` (`None`) in the signal. If GPU load telemetry is absent for a CUDA request, `feasibility_status` is marked as `"unknown"`.
+   - If `gpu_utilization_percent >= max_gpu_utilization_percent` (98.0%): `resource_feasible = false`.
+4. **CPU Utilization Check**: If `cpu_utilization_percent >= max_cpu_utilization_percent` (95.0%): `resource_feasible = false`.
+5. **Missing Telemetry Handling**: Missing load metrics remain `null` (`None`) in the signal. If GPU load telemetry is absent for a CUDA request, `feasibility_status` is marked as `"unknown"`.
 
 ---
 
@@ -97,11 +100,12 @@ Step 9 strictly separates hardware capability from current resource utilization:
 
 ---
 
-## 5. Candidate Evaluation & Deterministic Ranking
+## 5. Candidate Evaluation & Deterministic Non-Preferential Ordering
 
 `EdgeResourceEvaluator.evaluate_candidates(candidates, ...)` evaluates a list of Edge nodes:
-- Feasible nodes are returned first, ordered by CPU utilization ascending.
-- **No Arbitrary Utility Score**: Step 9 does NOT apply arbitrary weighted utility coefficients. Final multi-objective trade-off selection is deferred to Step 10.
+- Feasible and infeasible candidates are each identified explicitly with full attribute signals preserved.
+- **Non-Preferential Ordering**: Returned candidates are sorted strictly by `edge_id` alphabetically. This provides deterministic output ordering for repeatable testing/logging without imposing preference ordering (such as CPU utilization ascending) or weighted utility scores prior to Step 10.
+- **No Preference Policy or Utility Score**: Step 9 does NOT decide which feasible node is "best". Final multi-objective selection policy belongs exclusively to Step 10.
 
 ---
 
@@ -111,7 +115,7 @@ Step 9 strictly separates hardware capability from current resource utilization:
 pytest tests/test_edge_selection.py tests/test_bitrate_adaptation.py tests/test_fps_adaptation.py tests/test_remote_sr.py tests/test_foundation.py -v
 ```
 
-### Test Summary (54/54 Passed):
+### Test Summary (55/55 Passed):
 - `test_gpu_capable_feasible_edge`: Passed
 - `test_cpu_only_edge_cpu_request`: Passed
 - `test_unavailable_requested_gpu`: Passed (Verified NO silent CPU fallback)
@@ -119,10 +123,11 @@ pytest tests/test_edge_selection.py tests/test_bitrate_adaptation.py tests/test_
 - `test_overloaded_edge_node`: Passed
 - `test_missing_resource_telemetry`: Passed (Preserved `null` values)
 - `test_missing_network_telemetry`: Passed (Preserved `null` values)
-- `test_multiple_edge_candidates`: Passed
+- `test_multiple_edge_candidates`: Passed (Verified stable `edge_id` ordering, independent representations, and zero CPU preference bias)
 - `test_feasible_vs_infeasible_candidates`: Passed
 - `test_rtt_not_treated_as_end_to_end_latency`: Passed
 - `test_no_silent_cpu_fallback`: Passed
+- `test_configurable_resource_thresholds`: Passed (Verified custom engineering overload thresholds)
 - `test_real_local_step6_integration`: Passed (Live end-to-end Edge HTTP `/health` & chunk telemetry ingestion)
 - `tests/test_bitrate_adaptation.py` (12 tests): Passed
 - `tests/test_fps_adaptation.py` (12 tests): Passed
@@ -134,5 +139,5 @@ pytest tests/test_edge_selection.py tests/test_bitrate_adaptation.py tests/test_
 ## 7. Frozen Boundaries & Limitations
 
 - **Steps 0–8 Frozen**: Steps 0 through 8 remain 100% frozen. No contracts or code in Steps 0–8 were modified.
-- **No Final Adaptation Decision**: Step 9 evaluates candidate node feasibility; it does not select the final representation, model, or edge node.
+- **No Final Adaptation Decision**: Step 9 evaluates candidate node feasibility and preserves measurable state; it does not select the final representation, model, or edge node.
 - **Out of Scope**: Final Adaptive Decision Engine and global multi-objective optimization are deferred to Step 10.
