@@ -516,10 +516,11 @@ class FuzzyAdaptiveDecisionEngine:
         )
         activations["high"] = max(activations["high"], r2)
 
-        # R3 (High Performance - Bandwidth Saving & Real-Time)
+        # R3 (High Performance - Bandwidth Saving, Real-Time & Quality)
         r3 = min(
             rt["good"],
             max(bw["high"], bw["medium"]),
+            max(q["good"], q["acceptable"]),
             max(res["available"], res["moderate"]),
         )
         activations["high"] = max(activations["high"], r3)
@@ -534,8 +535,8 @@ class FuzzyAdaptiveDecisionEngine:
         )
         activations["medium"] = max(activations["medium"], r4)
 
-        # R5 (Resource / Network Moderate)
-        r5 = min(rt["moderate"], res["moderate"])
+        # R5 (Resource / Network / Quality Moderate)
+        r5 = min(rt["moderate"], max(q["good"], q["acceptable"]), res["moderate"])
         activations["medium"] = max(activations["medium"], r5)
 
         # R6 (Low Gain / Poor Quality)
@@ -637,8 +638,9 @@ class FuzzyAdaptiveDecisionEngine:
         5. Evaluate Mamdani rules and defuzzify suitability scores via centroid integration.
         6. Apply zero-activation fallback policy (returns None for unevaluable candidates).
         7. Filter candidates meeting min_suitability_threshold.
-        8. Apply Unevaluable Quality Selection Policy:
-           A candidate with quality_tier == "unevaluable" remains evaluable for resource/FPS analysis,
+        8. Apply Decision-Level Quality Selection Safety Constraint:
+           Final selection eligibility requires quality_tier in {"good", "acceptable"}.
+           Candidates with quality_tier in {"poor", "unevaluable"} are evaluated & recorded,
            BUT CANNOT be selected as the final SR candidate.
         9. Select optimal candidate (with explicit deterministic tie-breaking policy).
         10. Produce machine-readable FuzzyDecisionSignal.
@@ -705,29 +707,10 @@ class FuzzyAdaptiveDecisionEngine:
 
             rule_acts = self.evaluate_rules(fuzzified)
             score = self.defuzzify_centroid(rule_acts)
+            label = self.classify_suitability_label(score)
 
             if score is None:
-                eval_item = CandidateEvaluation(
-                    candidate_id=cand_id,
-                    edge_id=cand["edge_id"],
-                    base_representation_id=cand["base_representation_id"],
-                    target_resolution=cand["target_resolution"],
-                    model_id=cand["model_id"],
-                    scale=cand["scale"],
-                    device=cand["device"],
-                    hard_feasible=False,
-                    rejection_reasons=["zero_rule_activation_unevaluable"],
-                    fuzzified_inputs=fuzzified,
-                    quality_tier=q_tier,
-                    defuzzified_suitability=None,
-                    suitability_label="unevaluable",
-                    rule_activations=rule_acts,
-                )
-                all_evaluations.append(eval_item)
                 all_warnings.append(f"candidate_{cand_id}_zero_rule_activation_marked_unevaluable")
-                continue
-
-            label = self.classify_suitability_label(score)
 
             eval_item = CandidateEvaluation(
                 candidate_id=cand_id,
@@ -775,24 +758,28 @@ class FuzzyAdaptiveDecisionEngine:
             )
 
         # Filter by minimum suitability threshold AND valid quality evidence selection requirement
-        # A candidate with quality_tier == "unevaluable" cannot be selected as final SR candidate!
+        # Final selection eligibility requires quality_tier in {"good", "acceptable"}.
+        # Candidates with quality_tier in {"poor", "unevaluable"} cannot be selected as final SR candidate!
         eligible_evaluations = []
         for e in feasible_evaluations:
-            if e.defuzzified_suitability is None or e.defuzzified_suitability < self.min_suitability_threshold:
+            if e.quality_tier not in {"good", "acceptable"}:
+                rej_dict = e.to_dict()
+                reason = (
+                    "candidate_has_poor_quality_tier_cannot_be_selected_as_final_sr_candidate"
+                    if e.quality_tier == "poor"
+                    else "candidate_lacks_valid_quality_evidence_cannot_be_selected"
+                )
+                rej_dict["rejection_reasons"] = [reason]
+                rejected_items.append(rej_dict)
+                all_warnings.append(
+                    f"candidate_{e.candidate_id}_has_quality_tier_{e.quality_tier}_cannot_be_selected_as_final_sr_candidate"
+                )
+            elif e.defuzzified_suitability is None or e.defuzzified_suitability < self.min_suitability_threshold:
                 rej_dict = e.to_dict()
                 rej_dict["rejection_reasons"] = [
                     f"below_min_suitability_threshold_{self.min_suitability_threshold}"
                 ]
                 rejected_items.append(rej_dict)
-            elif e.quality_tier == "unevaluable":
-                rej_dict = e.to_dict()
-                rej_dict["rejection_reasons"] = [
-                    "candidate_lacks_valid_quality_evidence_cannot_be_selected"
-                ]
-                rejected_items.append(rej_dict)
-                all_warnings.append(
-                    f"candidate_{e.candidate_id}_has_unevaluable_quality_cannot_be_selected_as_final_sr_candidate"
-                )
             else:
                 eligible_evaluations.append(e)
 

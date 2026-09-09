@@ -26,7 +26,7 @@ Every candidate configuration preserves:
 
 ---
 
-## 2. Hard Feasibility Gate & Quality Selection Requirement
+## 2. Hard Feasibility Gate & Quality Selection Safety Constraint
 
 Before fuzzy inference, candidates are filtered through a strict Hard Feasibility Gate. Hard infeasibility cannot be overridden by fuzzy scoring.
 
@@ -39,8 +39,10 @@ A candidate is rejected if:
 
 *Soft Feasibility Note*: `real_time_ratio < 1.0` (e.g. $0.85$ `near_realtime`) remains hard-feasible; soft real-time feasibility tiers are evaluated by the fuzzy inference engine.
 
-### Strict Quality Evidence Selection Requirement
-While candidates lacking visual quality metrics (`quality_tier == "unevaluable"`) remain evaluable for FPS and resource load analysis, **they CANNOT be selected as the final SR decision candidate**. If the top-scoring candidate lacks quality evidence, selection is rejected with `decision = "no_suitable_candidate"` and warning `"candidate_lacks_valid_quality_evidence_cannot_be_selected"`.
+### Strict Decision-Level Quality Evidence Selection Safety Constraint
+While candidates with `quality_tier == "poor"` or `quality_tier == "unevaluable"` remain hard-feasible and are fully evaluated & recorded in `candidate_evaluations`, **they CANNOT be selected as the final SR decision candidate**. Final decision selection eligibility strictly requires:
+$$\text{quality\_tier} \in \{\text{"good"}, \text{"acceptable"}\}$$
+If top-scoring candidates fail this quality safety constraint, decision selection is rejected with `decision = "no_suitable_candidate"` and explicit rejection reasons logged (`"candidate_has_poor_quality_tier_cannot_be_selected_as_final_sr_candidate"` or `"candidate_lacks_valid_quality_evidence_cannot_be_selected"`).
 
 All hard-rejected or quality-selection-rejected candidates are logged in `rejected_candidates` with explicit `rejection_reasons`.
 
@@ -97,9 +99,9 @@ The rule base uses AND = $\min()$ and OR = $\max()$ antecedent operators:
 |---|---|---|---|
 | **R1** | `real_time_ratio` IS good **AND** `bandwidth_saving` IS high **AND** `quality` IS good **AND** `resource_condition` IS available **AND** `network_condition` IS good | `very_high` | Optimal streaming configuration |
 | **R2** | `real_time_ratio` IS good **AND** (`bandwidth_saving` IS high OR medium) **AND** (`quality` IS good OR acceptable) **AND** (`resource_condition` IS available OR moderate) | `high` | Strong performance with acceptable quality and compute |
-| **R3** | `real_time_ratio` IS good **AND** (`bandwidth_saving` IS high OR medium) **AND** (`resource_condition` IS available OR moderate) | `high` | High bandwidth saving with compute headroom |
+| **R3** | `real_time_ratio` IS good **AND** (`bandwidth_saving` IS high OR medium) **AND** (`quality` IS good OR acceptable) **AND** (`resource_condition` IS available OR moderate) | `high` | High bandwidth saving with compute headroom and valid quality |
 | **R4** | (`real_time_ratio` IS good OR moderate) **AND** (`bandwidth_saving` IS medium OR low) **AND** (`quality` IS good OR acceptable) **AND** (`resource_condition` IS available OR moderate) **AND** (`network_condition` IS good OR moderate) | `medium` | Balanced non-poor operational candidate |
-| **R5** | `real_time_ratio` IS moderate **AND** `resource_condition` IS moderate | `medium` | Moderate operational condition |
+| **R5** | `real_time_ratio` IS moderate **AND** (`quality` IS good OR acceptable) **AND** `resource_condition` IS moderate | `medium` | Moderate operational condition with valid quality |
 | **R6** | `bandwidth_saving` IS low **AND** `quality` IS poor | `low` | Minimal bandwidth gain for low visual quality |
 | **R7** | `network_condition` IS poor **OR** `resource_condition` IS constrained | `low` | Adverse network path or high resource load |
 | **R8** | `real_time_ratio` IS poor | `very_low` | Cannot sustain real-time playback budget |
@@ -127,7 +129,7 @@ If total aggregated rule activation area is $0.0$ ($\int \mu_{\text{agg}}(y) dy 
 ## 6. Selection, Minimum Threshold, & Deterministic Tie-Breaking
 
 1. **Minimum Suitability Threshold**: Configurable operational parameter `min_suitability_threshold` (default: $35.0$).
-2. **Quality Evidence Selection Requirement**: Candidates with `quality_tier == "unevaluable"` CANNOT be selected as the final SR decision candidate.
+2. **Quality Evidence Selection Requirement**: Candidates with `quality_tier` in `{"poor", "unevaluable"}` CANNOT be selected as the final SR decision candidate.
 3. **No Suitable Candidate**: If no candidate reaches $35.0$ or satisfies quality evidence requirements, returns `decision = "no_suitable_candidate"`.
 4. **Explicit Deterministic Tie-Breaking Policy**: Candidates meeting threshold and quality requirements are sorted by:
    - Primary: `defuzzified_suitability` (descending)
@@ -191,7 +193,7 @@ Command executed:
 D:\Abishek\venv\Scripts\python.exe -m pytest tests/test_fuzzy_decision.py tests/test_edge_selection.py tests/test_bitrate_adaptation.py tests/test_fps_adaptation.py tests/test_remote_sr.py tests/test_foundation.py -v
 ```
 
-### Test Results (71/71 Passed):
+### Test Results (77/77 Passed):
 - `test_single_feasible_candidate`: Passed
 - `test_multiple_feasible_candidates_highest_suitability_selected`: Passed
 - `test_hard_infeasible_candidate_rejected`: Passed
@@ -199,7 +201,12 @@ D:\Abishek\venv\Scripts\python.exe -m pytest tests/test_fuzzy_decision.py tests/
 - `test_cuda_device_aware_resource_condition`: Passed (Verified GPU load evaluated for CUDA)
 - `test_tie_breaking_determinism`: Passed
 - `test_minimum_suitability_threshold`: Passed
-- `test_unevaluable_quality_cannot_be_selected_as_final_sr_candidate`: Passed (Verified unevaluable quality candidates cannot be selected)
+- `test_unevaluable_quality_remains_non_selectable`: Passed (Verified unevaluable quality candidates cannot be selected)
+- `test_poor_quality_alone_cannot_produce_final_selection`: Passed (Verified poor quality candidates cannot produce final selection)
+- `test_poor_quality_cannot_win_against_selectable_candidate`: Passed (Verified poor quality loses to acceptable candidate)
+- `test_r3_cannot_produce_high_suitability_for_poor_quality`: Passed (Verified R3 produces 0 activation for poor quality)
+- `test_r5_cannot_produce_medium_suitability_for_poor_quality`: Passed (Verified R5 produces 0 activation for poor quality)
+- `test_good_acceptable_quality_remain_selectable`: Passed (Verified good and acceptable quality candidates remain selectable)
 - `test_contradictory_quality_metrics_classified_poor_not_good`: Passed (Verified VMAF=40 / PSNR=36 classified poor)
 - `test_r4_constrained_resource_or_poor_network_prevents_medium_suitability`: Passed (Verified R4 balance)
 - `test_missing_network_telemetry_handling`: Passed

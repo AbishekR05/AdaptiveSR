@@ -228,7 +228,7 @@ def test_minimum_suitability_threshold():
     assert result.selected_candidate is None
 
 
-def test_unevaluable_quality_cannot_be_selected_as_final_sr_candidate():
+def test_unevaluable_quality_remains_non_selectable():
     """Verify candidates with unevaluable quality are evaluated but CANNOT be selected as final SR candidate."""
     engine = FuzzyAdaptiveDecisionEngine()
 
@@ -237,13 +237,123 @@ def test_unevaluable_quality_cannot_be_selected_as_final_sr_candidate():
     resource = [create_sample_resource_signal(cpu_util=20.0, bw_mbps=100.0)]
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
-    # Candidate remains evaluated in candidate_evaluations
     assert len(result.candidate_evaluations) == 1
     assert result.candidate_evaluations[0]["quality_tier"] == "unevaluable"
-    # But decision MUST be no_suitable_candidate because quality evidence is lacking
     assert result.decision == "no_suitable_candidate"
     assert result.selected_candidate is None
     assert any("cannot_be_selected" in r for r in result.rejected_candidates[0]["rejection_reasons"])
+
+
+def test_poor_quality_alone_cannot_produce_final_selection():
+    """Verify poor quality candidates cannot produce final selection despite high RT ratio or available resource."""
+    engine = FuzzyAdaptiveDecisionEngine()
+
+    fps = [create_sample_fps_signal(real_time_ratio=1.5)]
+    bitrate = [create_sample_bitrate_signal(saving_percent=60.0, vmaf=45.0, psnr=25.0, ssim=0.70)]
+    resource = [create_sample_resource_signal(cpu_util=15.0, bw_mbps=150.0)]
+
+    result = engine.evaluate_candidates(fps, bitrate, resource)
+    assert len(result.candidate_evaluations) == 1
+    assert result.candidate_evaluations[0]["quality_tier"] == "poor"
+    assert result.decision == "no_suitable_candidate"
+    assert result.selected_candidate is None
+    assert any("poor_quality_tier" in r for r in result.rejected_candidates[0]["rejection_reasons"])
+
+
+def test_poor_quality_cannot_win_against_selectable_candidate():
+    """Verify poor quality candidate with high resource headroom loses to acceptable quality candidate."""
+    engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
+
+    # Candidate 1: Poor quality (vmaf=45.0), high RT ratio (1.5) -> Non-selectable
+    fps_1 = create_sample_fps_signal(real_time_ratio=1.5, base_representation_id="360p")
+    bitrate_1 = create_sample_bitrate_signal(saving_percent=60.0, vmaf=45.0, psnr=25.0, ssim=0.70, base_representation_id="360p")
+    resource_1 = create_sample_resource_signal(edge_id="edge_01", cpu_util=15.0, base_representation_id="360p")
+
+    # Candidate 2: Acceptable quality (vmaf=70.0), moderate RT ratio (1.1) -> Selectable
+    fps_2 = create_sample_fps_signal(real_time_ratio=1.1, base_representation_id="480p")
+    bitrate_2 = create_sample_bitrate_signal(saving_percent=40.0, vmaf=70.0, psnr=32.0, ssim=0.88, base_representation_id="480p")
+    resource_2 = create_sample_resource_signal(edge_id="edge_02", cpu_util=25.0, base_representation_id="480p")
+
+    result = engine.evaluate_candidates([fps_1, fps_2], [bitrate_1, bitrate_2], [resource_1, resource_2])
+    assert result.decision == "selected"
+    assert result.selected_candidate["candidate_id"] == "edge_02:480p:1280x720:tinysr:x2:cpu"
+    assert result.selected_candidate["quality_tier"] == "acceptable"
+
+
+def test_r3_cannot_produce_high_suitability_for_poor_quality():
+    """Verify R3 requires quality IS good OR acceptable, and produces 0 activation for poor quality."""
+    engine = FuzzyAdaptiveDecisionEngine()
+
+    fps = create_sample_fps_signal(real_time_ratio=1.4)
+    bitrate = create_sample_bitrate_signal(saving_percent=60.0, vmaf=45.0, psnr=25.0, ssim=0.70)
+    resource = create_sample_resource_signal(cpu_util=15.0)
+
+    cand = {
+        "candidate_id": "c1",
+        "edge_id": "edge_01",
+        "base_representation_id": "360p",
+        "target_resolution": "1280x720",
+        "model_id": "tinysr",
+        "scale": 2,
+        "device": "cpu",
+        "resource_signal": resource,
+        "fps_signal": fps,
+        "bitrate_signal": bitrate,
+    }
+
+    q_tier, _ = engine.classify_quality_suitability(bitrate)
+    fuzzified, _ = engine.fuzzify_inputs(cand, q_tier)
+    rule_acts = engine.evaluate_rules(fuzzified)
+
+    assert q_tier == "poor"
+    assert rule_acts["high"] == 0.0
+
+
+def test_r5_cannot_produce_medium_suitability_for_poor_quality():
+    """Verify R5 requires quality IS good OR acceptable, and produces 0 activation for poor quality."""
+    engine = FuzzyAdaptiveDecisionEngine()
+
+    fps = create_sample_fps_signal(real_time_ratio=0.85)  # moderate
+    bitrate = create_sample_bitrate_signal(saving_percent=30.0, vmaf=45.0, psnr=25.0, ssim=0.70)
+    resource = create_sample_resource_signal(cpu_util=50.0)  # moderate
+
+    cand = {
+        "candidate_id": "c1",
+        "edge_id": "edge_01",
+        "base_representation_id": "360p",
+        "target_resolution": "1280x720",
+        "model_id": "tinysr",
+        "scale": 2,
+        "device": "cpu",
+        "resource_signal": resource,
+        "fps_signal": fps,
+        "bitrate_signal": bitrate,
+    }
+
+    q_tier, _ = engine.classify_quality_suitability(bitrate)
+    fuzzified, _ = engine.fuzzify_inputs(cand, q_tier)
+    rule_acts = engine.evaluate_rules(fuzzified)
+
+    assert q_tier == "poor"
+    assert rule_acts["medium"] == 0.0
+
+
+def test_good_acceptable_quality_remain_selectable():
+    """Verify candidates with good or acceptable quality remain fully selectable."""
+    engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
+
+    fps = [create_sample_fps_signal(real_time_ratio=1.2)]
+    bitrate_good = [create_sample_bitrate_signal(vmaf=85.0, psnr=36.0, ssim=0.94)]
+    bitrate_acceptable = [create_sample_bitrate_signal(vmaf=70.0, psnr=32.0, ssim=0.88)]
+    resource = [create_sample_resource_signal(cpu_util=20.0, bw_mbps=100.0)]
+
+    res_good = engine.evaluate_candidates(fps, bitrate_good, resource)
+    assert res_good.decision == "selected"
+    assert res_good.selected_candidate["quality_tier"] == "good"
+
+    res_acc = engine.evaluate_candidates(fps, bitrate_acceptable, resource)
+    assert res_acc.decision == "selected"
+    assert res_acc.selected_candidate["quality_tier"] == "acceptable"
 
 
 def test_contradictory_quality_metrics_classified_poor_not_good():
@@ -260,16 +370,13 @@ def test_r4_constrained_resource_or_poor_network_prevents_medium_suitability():
     """Verify R4 cannot award medium suitability when network is poor or resource is constrained."""
     engine = FuzzyAdaptiveDecisionEngine()
 
-    # RT ratio good, BW saving medium, but network is poor (2 Mbps)
     fps = [create_sample_fps_signal(real_time_ratio=1.2)]
     bitrate = [create_sample_bitrate_signal(saving_percent=35.0)]
     resource = [create_sample_resource_signal(cpu_util=20.0, bw_mbps=2.0)]
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
     eval_item = result.candidate_evaluations[0]
-    # R4 firing strength should be 0.0 because network is poor
     assert eval_item["rule_activations"]["medium"] == 0.0
-    # R7 should fire low
     assert eval_item["rule_activations"]["low"] > 0.0
 
 
