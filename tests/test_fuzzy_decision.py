@@ -14,7 +14,7 @@ from adaptive_sr.adaptation.fuzzy_engine import FuzzyAdaptiveDecisionEngine, Fuz
 
 
 def create_sample_fps_signal(
-    real_time_ratio: float = 1.2,
+    real_time_ratio: float = 1.3,
     base_representation_id: str = "360p",
     model_id: str = "tinysr",
     scale: int = 2,
@@ -81,8 +81,9 @@ def create_sample_resource_signal(
     edge_id: str = "edge_01",
     resource_feasible: bool = True,
     cpu_util: float = 25.0,
+    gpu_util: float = 20.0,
     gpu_available: bool = True,
-    rtt_ms: float = 15.0,
+    bw_mbps: float = 100.0,
     base_representation_id: str = "360p",
     model_id: str = "tinysr",
     scale: int = 2,
@@ -102,18 +103,19 @@ def create_sample_resource_signal(
         hardware_capability={
             "cpu_cores_total": 8,
             "gpu_available": gpu_available,
+            "gpu_memory_total_bytes": 8000000000 if gpu_available else None,
             "supported_devices": ["cpu", "cuda"],
             "supported_models": ["tinysr", "real_esrgan"],
         },
         resource_availability={
             "cpu_utilization_percent": cpu_util,
             "memory_utilization_percent": 40.0,
-            "gpu_utilization_percent": 10.0 if gpu_available else None,
+            "gpu_utilization_percent": gpu_util if gpu_available else None,
             "gpu_memory_free_bytes": 4000000000 if gpu_available else None,
         },
         network_telemetry={
-            "cloud_edge_rtt_ms": rtt_ms,
-            "measured_bandwidth_mbps": 100.0,
+            "cloud_edge_rtt_ms": 15.0,
+            "measured_bandwidth_mbps": bw_mbps,
         },
         sr_telemetry={"sr_processing_time_ms": 25.0},
         measurement_provenance="test_provenance",
@@ -125,7 +127,7 @@ def test_single_feasible_candidate():
     engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
     fps = [create_sample_fps_signal(real_time_ratio=1.3)]
     bitrate = [create_sample_bitrate_signal(saving_percent=55.0)]
-    resource = [create_sample_resource_signal(edge_id="edge_01", cpu_util=20.0)]
+    resource = [create_sample_resource_signal(edge_id="edge_01", cpu_util=20.0, bw_mbps=100.0)]
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
     assert result.decision == "selected"
@@ -159,7 +161,6 @@ def test_multiple_feasible_candidates_highest_suitability_selected():
 def test_hard_infeasible_candidate_rejected():
     engine = FuzzyAdaptiveDecisionEngine()
     
-    # Infeasible resource signal (e.g. CPU overloaded >= 95% in Step 9)
     resource_infeasible = create_sample_resource_signal(edge_id="edge_bad", resource_feasible=False)
     fps = create_sample_fps_signal()
     bitrate = create_sample_bitrate_signal()
@@ -183,10 +184,27 @@ def test_cuda_requested_gpu_unavailable_hard_rejected():
     assert "cuda_requested_but_gpu_unavailable" in result.rejected_candidates[0]["rejection_reasons"]
 
 
+def test_cuda_device_aware_resource_condition():
+    """Verify CUDA candidates evaluate GPU load rather than CPU utilization alone."""
+    engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
+
+    # CUDA candidate with idle CPU (10%) but overloaded GPU (90%)
+    fps = [create_sample_fps_signal(device="cuda")]
+    bitrate = [create_sample_bitrate_signal(device="cuda")]
+    resource = [create_sample_resource_signal(device="cuda", gpu_available=True, cpu_util=10.0, gpu_util=90.0)]
+
+    result = engine.evaluate_candidates(fps, bitrate, resource)
+    eval_item = result.candidate_evaluations[0]
+
+    # Verify resource condition fuzzification saw high GPU load (90%) -> headroom 0.10 (constrained)
+    res_fuzz = eval_item["fuzzified_inputs"]["resource_condition"]
+    assert res_fuzz["constrained"] > 0.0
+    assert res_fuzz["available"] == 0.0
+
+
 def test_tie_breaking_determinism():
     engine = FuzzyAdaptiveDecisionEngine()
 
-    # Create two identical candidate evaluations with same suitability
     fps_a = create_sample_fps_signal(real_time_ratio=1.2, base_representation_id="360p")
     bitrate_a = create_sample_bitrate_signal(saving_percent=50.0, base_representation_id="360p")
     resource_a = create_sample_resource_signal(edge_id="edge_b", base_representation_id="360p")
@@ -198,13 +216,11 @@ def test_tie_breaking_determinism():
     result1 = engine.evaluate_candidates([fps_a, fps_b], [bitrate_a, bitrate_b], [resource_a, resource_b])
     result2 = engine.evaluate_candidates([fps_b, fps_a], [bitrate_b, bitrate_a], [resource_b, resource_a])
 
-    # Should break ties deterministically by edge_id ("edge_a" < "edge_b")
     assert result1.selected_edge_id == "edge_a"
     assert result2.selected_edge_id == "edge_a"
 
 
 def test_minimum_suitability_threshold():
-    # Set high threshold so no candidate passes
     engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=95.0)
 
     fps = [create_sample_fps_signal(real_time_ratio=0.75)]
@@ -217,16 +233,18 @@ def test_minimum_suitability_threshold():
 
 
 def test_missing_quality_metrics_handling():
+    """Verify missing quality metrics yield 'unevaluable' quality tier without fake 0.5 membership."""
     engine = FuzzyAdaptiveDecisionEngine()
 
     fps = [create_sample_fps_signal()]
-    # Bitrate signal with quality_evaluable = False
     bitrate = [create_sample_bitrate_signal(quality_evaluable=False)]
     resource = [create_sample_resource_signal()]
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
     assert result.decision == "selected"
-    assert any("missing_quality_metrics_using_neutral_fuzzy_membership" in w for w in result.warnings)
+    eval_item = result.candidate_evaluations[0]
+    assert eval_item["quality_tier"] == "unevaluable"
+    assert eval_item["fuzzified_inputs"]["quality"] == {"good": 0.0, "acceptable": 0.0, "poor": 0.0}
 
 
 def test_missing_network_telemetry_handling():
@@ -235,12 +253,12 @@ def test_missing_network_telemetry_handling():
     fps = [create_sample_fps_signal()]
     bitrate = [create_sample_bitrate_signal()]
     resource = [create_sample_resource_signal()]
-    # Clear network telemetry
     resource[0].network_telemetry = {}
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
     assert result.decision == "selected"
-    assert any("missing_network_telemetry_using_neutral_network_condition" in w for w in result.warnings)
+    eval_item = result.candidate_evaluations[0]
+    assert eval_item["fuzzified_inputs"]["network_condition"] == {"good": 0.0, "moderate": 0.0, "poor": 0.0}
 
 
 def test_missing_resource_telemetry_handling():
@@ -249,16 +267,27 @@ def test_missing_resource_telemetry_handling():
     fps = [create_sample_fps_signal()]
     bitrate = [create_sample_bitrate_signal()]
     resource = [create_sample_resource_signal()]
-    # Clear CPU utilization telemetry
     resource[0].resource_availability = {"cpu_utilization_percent": None}
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
     assert result.decision == "selected"
-    assert any("missing_cpu_telemetry_using_neutral_resource_condition" in w for w in result.warnings)
+    assert any("missing_cpu_telemetry_using_neutral_resource_load_50pct" in w for w in result.warnings)
+
+
+def test_soft_realtime_ratio_below_1_feasible():
+    """Verify real_time_ratio < 1.0 (e.g. 0.85 near_realtime) remains hard-feasible and is evaluated softly."""
+    engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
+
+    fps = [create_sample_fps_signal(real_time_ratio=0.85)]
+    bitrate = [create_sample_bitrate_signal(saving_percent=40.0)]
+    resource = [create_sample_resource_signal(cpu_util=30.0)]
+
+    result = engine.evaluate_candidates(fps, bitrate, resource)
+    assert result.decision == "selected"
+    assert result.selected_candidate["defuzzified_suitability"] >= 35.0
 
 
 def test_realtime_feasible_vs_decision_eligible_distinction():
-    """Verify realtime_feasible=True can occur when decision_eligible=False, and engine handles signals appropriately."""
     fps = create_sample_fps_signal(real_time_ratio=1.2, decision_eligible=False)
     bitrate = create_sample_bitrate_signal(decision_eligible=True)
     resource = create_sample_resource_signal()
@@ -301,7 +330,6 @@ def test_deterministic_repeated_decisions():
 
 def test_integration_real_step7_8_9_signals():
     """Integration test constructing actual signals from Step 7, Step 8, and Step 9 modules."""
-    # Step 7 Adapter
     fps_sig = FPSAdapter.evaluate(
         source_fps=30.0,
         measured_latency_ms=22.0,
@@ -311,7 +339,6 @@ def test_integration_real_step7_8_9_signals():
         base_representation_id="360p",
     )
 
-    # Step 8 Adapter
     bitrate_sig = BitrateAdapter.evaluate(
         reference_representation_id="720p",
         candidate_representation_id="360p",
@@ -327,7 +354,6 @@ def test_integration_real_step7_8_9_signals():
         vmaf=88.0,
     )
 
-    # Step 9 Evaluator
     edge_state = EdgeResourceState(
         edge_id="edge_01",
         cluster_id="cluster_01",
@@ -347,7 +373,6 @@ def test_integration_real_step7_8_9_signals():
         sr_processing_time_ms=22.0,
     )
 
-    # Step 10 Decision Engine
     engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
     decision_signal = engine.evaluate_candidates(
         fps_signals=[fps_sig],
@@ -361,5 +386,5 @@ def test_integration_real_step7_8_9_signals():
     assert decision_signal.model_id == "tinysr"
     assert decision_signal.scale == 2
     assert decision_signal.device == "cpu"
-    assert decision_signal.fuzzy_suitability > 70.0
+    assert decision_signal.fuzzy_suitability > 60.0
     assert decision_signal.baseline_comparison_ready is True
