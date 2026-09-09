@@ -38,9 +38,10 @@ $$\text{bandwidth\_saving\_percent} = \frac{\text{reference\_bitrate\_bps} - \te
   "quality_provenance": "model_inference",
   "measurement_provenance": "step5.6_quality_eval",
   "decision_eligible": true,
-  "quality_equivalent_to_native": false,
+  "quality_equivalent_to_native": null,
+  "quality_equivalence_status": "not_evaluated",
   "warnings": [
-    "LOWER BITRATE + SR DOES NOT AUTOMATICALLY MEAN EQUIVALENT QUALITY.",
+    "Quality equivalence to native representation not established; lower bitrate + SR does not automatically guarantee native quality parity.",
     "VMAF metric unavailable or not measured."
   ]
 }
@@ -48,13 +49,16 @@ $$\text{bandwidth\_saving\_percent} = \frac{\text{reference\_bitrate\_bps} - \te
 
 ---
 
-## 3. Native vs. SR Quality Parity Policy
+## 3. Native vs. SR Quality Parity Policy & Audit Rules
 
-> [!IMPORTANT]
-> **Quality Equivalence Disclaimer**:
-> Lowering base bitrate and applying Super-Resolution does **NOT** automatically guarantee quality equivalent to a native higher-resolution representation.
-> `quality_equivalent_to_native` is strictly set to `false` by default, accompanied by the mandatory warning:
-> `"LOWER BITRATE + SR DOES NOT AUTOMATICALLY MEAN EQUIVALENT QUALITY."`
+1. **Quality Evaluability vs. Decision Eligibility**:
+   - `quality_evaluable = true` indicates that valid quality measurements (PSNR, SSIM, or VMAF) exist.
+   - `decision_eligible` is NOT inferred from `quality_evaluable`; it strictly preserves Step 5's eligibility rules ($\text{session\_count} \ge 3$, $\text{CV} \le 15\%$). A candidate can be `quality_evaluable = true` while `decision_eligible = false`.
+2. **Quality Equivalence Semantics**:
+   - Lowering base bitrate and applying Super-Resolution does **NOT** automatically guarantee quality equivalent to a native higher-resolution representation.
+   - Unless explicit comparative native quality evidence is provided, `quality_equivalent_to_native` returns `null` (`None`) with `quality_equivalence_status = "not_evaluated"`.
+3. **Bitrate Semantics**:
+   - Bandwidth savings are calculated strictly from declared/measured bitrates (`reference_bitrate_bps` vs `candidate_bitrate_bps`), without assuming resolution implies bitrate.
 
 ---
 
@@ -88,7 +92,7 @@ pytest tests/test_bitrate_adaptation.py tests/test_fps_adaptation.py tests/test_
 - `test_multiple_representations`: Passed
 - `test_missing_quality_measurements`: Passed
 - `test_decision_eligibility_distinction`: Passed
-- `test_real_local_step6_integration`: Passed (Live end-to-end Edge HTTP TestClient execution with `TinySR` + manifest metadata join)
+- `test_real_local_step6_integration`: Passed
 - `tests/test_fps_adaptation.py` (12 tests): Passed
 - `tests/test_remote_sr.py` (5 tests): Passed
 - `tests/test_foundation.py` (13 tests): Passed

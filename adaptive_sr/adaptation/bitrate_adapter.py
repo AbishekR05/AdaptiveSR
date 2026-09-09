@@ -33,7 +33,8 @@ class BitrateAdaptationSignal:
     quality_provenance: str
     measurement_provenance: str
     decision_eligible: bool
-    quality_equivalent_to_native: bool
+    quality_equivalent_to_native: Optional[bool]
+    quality_equivalence_status: str
     warnings: List[str]
 
     def to_dict(self) -> Dict[str, Any]:
@@ -87,6 +88,7 @@ class BitrateAdapter:
         decision_eligible: bool = True,
         min_psnr_db: Optional[float] = None,
         min_ssim: Optional[float] = None,
+        quality_equivalent_to_native: Optional[bool] = None,
     ) -> BitrateAdaptationSignal:
         """
         Evaluates the bandwidth-vs-quality tradeoff signal for a candidate SR configuration
@@ -94,9 +96,12 @@ class BitrateAdapter:
         """
         warnings: List[str] = []
 
-        # Explicit requirement 124 / 8.4: Disclaimer for quality equivalence
-        quality_equivalent_to_native = False
-        warnings.append("LOWER BITRATE + SR DOES NOT AUTOMATICALLY MEAN EQUIVALENT QUALITY.")
+        # Native quality equivalence semantics
+        if quality_equivalent_to_native is not None:
+            quality_equivalence_status = "evaluated"
+        else:
+            quality_equivalence_status = "not_evaluated"
+            warnings.append("Quality equivalence to native representation not established; lower bitrate + SR does not automatically guarantee native quality parity.")
 
         # Calculate bitrate saving
         saving_pct = cls.calculate_bitrate_saving(reference_bitrate_bps, candidate_bitrate_bps)
@@ -110,7 +115,7 @@ class BitrateAdapter:
         elif saving_pct == 0.0:
             warnings.append("Candidate bitrate is equal to reference bitrate (0% bandwidth saving).")
 
-        # Quality evaluability check
+        # Quality evaluability check: valid measurements exist
         has_psnr = psnr_db is not None and psnr_db > 0.0
         has_ssim = ssim is not None and ssim > 0.0
         has_vmaf = vmaf is not None and vmaf > 0.0
@@ -152,6 +157,7 @@ class BitrateAdapter:
             measurement_provenance=str(measurement_provenance),
             decision_eligible=bool(decision_eligible),
             quality_equivalent_to_native=quality_equivalent_to_native,
+            quality_equivalence_status=quality_equivalence_status,
             warnings=warnings
         )
 

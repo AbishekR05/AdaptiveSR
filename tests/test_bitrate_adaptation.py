@@ -137,8 +137,9 @@ def test_base_target_representation_identity():
     assert sig.base_resolution == "854x480"
     assert sig.target_resolution == "1920x1080"
     assert sig.model_id == "real_esrgan"
-    assert sig.quality_equivalent_to_native is False
-    assert any("LOWER BITRATE + SR DOES NOT AUTOMATICALLY MEAN EQUIVALENT QUALITY" in w for w in sig.warnings)
+    assert sig.quality_equivalent_to_native is None
+    assert sig.quality_equivalence_status == "not_evaluated"
+    assert any("Quality equivalence to native representation not established" in w for w in sig.warnings)
 
 
 # Test 9: Multiple representations evaluation
@@ -179,15 +180,18 @@ def test_missing_quality_measurements():
     assert any("No genuine quality metrics" in w for w in sig.warnings)
 
 
-# Test 11: Decision eligibility distinction
+# Test 11: Decision eligibility distinction (quality_evaluable=True while decision_eligible=False)
 def test_decision_eligibility_distinction():
     sig = BitrateAdapter.evaluate(
         reference_representation_id="720p",
         candidate_representation_id="360p",
         reference_bitrate_bps=3000000.0,
         candidate_bitrate_bps=1000000.0,
+        psnr_db=32.0,
+        ssim=0.90,
         decision_eligible=False,
     )
+    assert sig.quality_evaluable is True
     assert sig.decision_eligible is False
     assert any("not decision-eligible" in w for w in sig.warnings)
 
