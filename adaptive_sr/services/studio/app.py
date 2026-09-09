@@ -239,9 +239,11 @@ def process_video(payload: Dict[str, Any]):
             "request_id": str(uuid.uuid4()),
         }
 
-    # 1. Invoke closed-loop AdaptiveSR runtime pipeline
+    # 1. Invoke closed-loop AdaptiveSR runtime pipeline with all available registered models
+    available_models = list_available_models()
     runtime = AdaptiveSRRuntime(
         video_id=video_id or "studio_demo",
+        available_models=available_models,
         min_suitability_threshold=min_suitability_threshold,
         fallback_representation_id=fallback_rep,
         execution_handler=studio_execution_handler,
@@ -251,8 +253,10 @@ def process_video(payload: Dict[str, Any]):
     telemetry = runtime.process_chunk(
         chunk_id="0000",
         chunk_duration=input_meta["duration_seconds"],
-        observed_network_mbps=15.0,
-        observed_rtt_seconds=0.03,
+        observed_network_mbps=25.0,
+        observed_rtt_seconds=0.02,
+        observed_edge_cpu=15.0,
+        observed_edge_gpu=20.0,
     )
 
     delivery_mode = telemetry.delivery_mode
@@ -271,9 +275,9 @@ def process_video(payload: Dict[str, Any]):
     actual_device_used = None
 
     if delivery_mode == "sr" and exec_cfg:
-        actual_model_used = exec_cfg.get("model_id", "tinysr")
+        actual_model_used = exec_cfg.get("model_id", "real_esrgan")
         actual_scale_used = exec_cfg.get("scale", 2)
-        actual_device_used = exec_cfg.get("device", "cpu")
+        actual_device_used = exec_cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu")
 
         # Read frames
         cap = cv2.VideoCapture(str(input_path))
@@ -305,14 +309,15 @@ def process_video(payload: Dict[str, Any]):
         out_h, out_w = upscaled_frames[0].shape[:2]
         fps_val = input_meta["fps"]
 
-        # Encode upscaled video frames to MP4
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(output_path), fourcc, fps_val, (out_w, out_h))
-        for f in upscaled_frames:
-            writer.write(f)
-        writer.release()
+        # Encode upscaled video frames to browser-compatible H.264 MP4 using imageio
+        import imageio
+        rgb_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in upscaled_frames]
+        writer = imageio.get_writer(str(output_path), fps=fps_val, codec="libx264", macro_block_size=1)
+        for f in rgb_frames:
+            writer.append_data(f)
+        writer.close()
 
-        inference_fps = len(frames) / inference_elapsed if inference_elapsed > 0 else 0.0
+        inference_fps = len(frames) / inference_elapsed if inference_elapsed > 0 else 0.00
 
     else:
         # Native fallback or execution failure

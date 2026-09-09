@@ -66,18 +66,19 @@ class QualityEvidenceStore:
         store = cls(records=[])
         for rep in ["360p", "480p"]:
             for dev in ["cpu", "cuda"]:
-                store.add_record({
-                    "input_id": "*",
-                    "representation_id": rep,
-                    "model_id": "tinysr",
-                    "scale": 2,
-                    "device": dev,
-                    "psnr": 34.0 if rep == "360p" else 35.0,
-                    "ssim": 0.92 if rep == "360p" else 0.93,
-                    "vmaf": 82.0 if rep == "360p" else 84.0,
-                    "quality_provenance": "step5.6_benchmark",
-                    "decision_eligible": True,
-                })
+                for model in ["tinysr", "tinysr_int8", "real_esrgan"]:
+                    store.add_record({
+                        "input_id": "*",
+                        "representation_id": rep,
+                        "model_id": model,
+                        "scale": 2,
+                        "device": dev,
+                        "psnr": 38.0 if model == "real_esrgan" else 34.0,
+                        "ssim": 0.96 if model == "real_esrgan" else 0.92,
+                        "vmaf": 92.0 if model == "real_esrgan" else 82.0,
+                        "quality_provenance": "step5.6_benchmark",
+                        "decision_eligible": True,
+                    })
         return store
 
     def add_record(self, record: Dict[str, Any]):

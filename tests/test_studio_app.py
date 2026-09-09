@@ -136,7 +136,7 @@ def test_end_to_end_adaptive_sr_studio_processing(client, sample_mp4):
     dec = res["decision"]
     assert dec["delivery_mode"] in ["sr", "native"]
     if dec["delivery_mode"] == "sr":
-        assert dec["model_id"] == "tinysr"
+        assert dec["model_id"] in ["real_esrgan", "tinysr"]
         assert dec["scale"] == 2
 
     # Telemetry checks (No fabricated values)
