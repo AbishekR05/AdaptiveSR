@@ -9,5 +9,15 @@ from adaptive_sr.adaptation.fps_adapter import (
     FPSAdaptationSignal,
     classify_realtime_ratio,
 )
+from adaptive_sr.adaptation.bitrate_adapter import (
+    BitrateAdapter,
+    BitrateAdaptationSignal,
+)
 
-__all__ = ["FPSAdapter", "FPSAdaptationSignal", "classify_realtime_ratio"]
+__all__ = [
+    "FPSAdapter",
+    "FPSAdaptationSignal",
+    "classify_realtime_ratio",
+    "BitrateAdapter",
+    "BitrateAdaptationSignal",
+]
