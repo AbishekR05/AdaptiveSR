@@ -122,18 +122,30 @@ def load_model(device: str, scale: int = 2) -> FSRCNN_model:
 def infer(frame_bgr: np.ndarray, device: str, scale: int = 2) -> np.ndarray:
     model = load_model(device, scale=scale)
 
-    # 1. Preprocess: BGR -> RGB, normalization, tensor conversion, permute to BCHW
-    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    input_tensor = torch.from_numpy(frame_rgb).float() / 255.0
+    # 1. Convert BGR -> YCrCb and isolate Y (Luminance) from Cr/Cb (Chroma)
+    ycrcb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YCrCb)
+    y_channel, cr_channel, cb_channel = cv2.split(ycrcb)
+
+    # 2. Feed Y channel into FSRCNN model
+    y_3ch = cv2.merge([y_channel, y_channel, y_channel])
+    input_tensor = torch.from_numpy(y_3ch).float() / 255.0
     input_tensor = input_tensor.permute(2, 0, 1).unsqueeze(0).to(device)
 
-    # 2. Execute inference
+    # 3. Execute model inference on luminance channel
     with torch.no_grad():
         output_tensor = model(input_tensor)
 
-    # 3. Postprocess: BCHW -> HWC, convert to uint8, RGB -> BGR
     output_tensor = output_tensor.squeeze(0).cpu().permute(1, 2, 0)
     output_np = (output_tensor.numpy() * 255.0).clip(0, 255).astype(np.uint8)
-    enhanced_frame_bgr = cv2.cvtColor(output_np, cv2.COLOR_RGB2BGR)
+    y_sr = cv2.cvtColor(output_np, cv2.COLOR_RGB2GRAY)
+
+    # 4. Upscale Cr and Cb chroma channels using bicubic interpolation to preserve exact true colors
+    h_sr, w_sr = y_sr.shape[:2]
+    cr_sr = cv2.resize(cr_channel, (w_sr, h_sr), interpolation=cv2.INTER_CUBIC)
+    cb_sr = cv2.resize(cb_channel, (w_sr, h_sr), interpolation=cv2.INTER_CUBIC)
+
+    # 5. Merge Y_sr + Cr_sr + Cb_sr and convert back to BGR
+    ycrcb_sr = cv2.merge([y_sr, cr_sr, cb_sr])
+    enhanced_frame_bgr = cv2.cvtColor(ycrcb_sr, cv2.COLOR_YCrCb2BGR)
 
     return enhanced_frame_bgr
