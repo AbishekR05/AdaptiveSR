@@ -244,7 +244,7 @@ class FuzzyAdaptiveDecisionEngine:
         return is_feasible, rejection_reasons
 
     # ------------------------------------------------------------------------
-    # 10.4 Quality Suitability Classification (No Arbitrary Scalar Weights)
+    # 10.4 Conservative Quality Evidence Policy (Non-Contradictory Evidence)
     # ------------------------------------------------------------------------
 
     @staticmethod
@@ -252,10 +252,14 @@ class FuzzyAdaptiveDecisionEngine:
         bitrate_signal: Optional[BitrateAdaptationSignal],
     ) -> Tuple[str, List[str]]:
         """
-        Classifies visual quality evidence into discrete qualitative tiers:
-        "good", "acceptable", "poor", or "unevaluable".
+        Classifies visual quality evidence using a conservative non-contradictory evidence policy:
+        - "good": At least one available metric meets high threshold (VMAF >= 80, PSNR >= 35, SSIM >= 0.92)
+                  AND NO available metric is below poor threshold (VMAF < 60, PSNR < 30, SSIM < 0.85).
+        - "poor": ANY available metric is below poor threshold (VMAF < 60, PSNR < 30, SSIM < 0.85).
+        - "acceptable": At least one metric available, no metric poor, but high threshold not met.
+        - "unevaluable": quality_evaluable == False or no numerical metrics present.
 
-        This avoids creating a synthetic weighted average scalar score from PSNR/SSIM/VMAF.
+        This avoids allowing a single metric to override contradictory poor metrics (e.g. VMAF=40 with PSNR=36).
         Missing or unevaluable evidence returns "unevaluable" without fabricating fake 0.5 scores.
         """
         warnings = []
@@ -275,24 +279,26 @@ class FuzzyAdaptiveDecisionEngine:
             warnings.append("no_valid_numerical_quality_metrics_present")
             return "unevaluable", warnings
 
-        # Classify tier based on available evidence
-        is_good = (
+        # Check for ANY contradictory poor metric
+        is_any_poor = (
+            (has_vmaf and vmaf < 60.0)
+            or (has_psnr and psnr < 30.0)
+            or (has_ssim and ssim < 0.85)
+        )
+        if is_any_poor:
+            warnings.append("contradictory_or_poor_quality_metric_detected_classified_poor")
+            return "poor", warnings
+
+        # Check for high quality without poor contradiction
+        has_high_metric = (
             (has_vmaf and vmaf >= 80.0)
             or (has_psnr and psnr >= 35.0)
             or (has_ssim and ssim >= 0.92)
         )
-        if is_good:
+        if has_high_metric:
             return "good", warnings
 
-        is_acceptable = (
-            (has_vmaf and vmaf >= 60.0)
-            or (has_psnr and psnr >= 30.0)
-            or (has_ssim and ssim >= 0.85)
-        )
-        if is_acceptable:
-            return "acceptable", warnings
-
-        return "poor", warnings
+        return "acceptable", warnings
 
     # ------------------------------------------------------------------------
     # 10.3 Fuzzy Inputs & Fuzzification
@@ -449,7 +455,7 @@ class FuzzyAdaptiveDecisionEngine:
         ---------------------
         R1 (Optimal): IF real_time_ratio IS good AND bandwidth_saving IS high AND quality IS good
             AND resource_condition IS available AND network_condition IS good
-            THEN suitability IS very_high (Rationale: Ideal optimal conditions)
+            THEN suitability IS very_high
 
         R2 (High Performance - Good/Acceptable Quality & Compute Headroom):
             IF real_time_ratio IS good AND (bandwidth_saving IS high OR medium)
@@ -461,8 +467,10 @@ class FuzzyAdaptiveDecisionEngine:
             AND (resource_condition IS available OR moderate)
             THEN suitability IS high
 
-        R4 (Moderate Tradeoff - Moderate RT or Medium BW saving):
+        R4 (Moderate Tradeoff - Balanced Non-Poor Condition):
             IF (real_time_ratio IS good OR moderate) AND (bandwidth_saving IS medium OR low)
+            AND (quality IS good OR acceptable) AND (resource_condition IS available OR moderate)
+            AND (network_condition IS good OR moderate)
             THEN suitability IS medium
 
         R5 (Resource / Network Moderate):
@@ -516,8 +524,14 @@ class FuzzyAdaptiveDecisionEngine:
         )
         activations["high"] = max(activations["high"], r3)
 
-        # R4 (Moderate Tradeoff)
-        r4 = min(max(rt["good"], rt["moderate"]), max(bw["medium"], bw["low"]))
+        # R4 (Moderate Tradeoff - Non-Poor Balanced State)
+        r4 = min(
+            max(rt["good"], rt["moderate"]),
+            max(bw["medium"], bw["low"]),
+            max(q["good"], q["acceptable"]),
+            max(res["available"], res["moderate"]),
+            max(net["good"], net["moderate"]),
+        )
         activations["medium"] = max(activations["medium"], r4)
 
         # R5 (Resource / Network Moderate)
@@ -618,12 +632,16 @@ class FuzzyAdaptiveDecisionEngine:
         Main decision workflow:
         1. Construct candidate configurations.
         2. Evaluate hard feasibility gate.
-        3. Classify quality suitability tier and fuzzify inputs for hard-feasible candidates.
-        4. Evaluate Mamdani rules and defuzzify suitability scores via centroid integration.
-        5. Apply zero-activation fallback policy (returns None for unevaluable candidates).
-        6. Filter candidates meeting min_suitability_threshold.
-        7. Select optimal candidate (with explicit deterministic tie-breaking policy).
-        8. Produce machine-readable FuzzyDecisionSignal.
+        3. Classify quality suitability tier (conservative non-contradictory policy).
+        4. Fuzzify 5 continuous input variables.
+        5. Evaluate Mamdani rules and defuzzify suitability scores via centroid integration.
+        6. Apply zero-activation fallback policy (returns None for unevaluable candidates).
+        7. Filter candidates meeting min_suitability_threshold.
+        8. Apply Unevaluable Quality Selection Policy:
+           A candidate with quality_tier == "unevaluable" remains evaluable for resource/FPS analysis,
+           BUT CANNOT be selected as the final SR candidate.
+        9. Select optimal candidate (with explicit deterministic tie-breaking policy).
+        10. Produce machine-readable FuzzyDecisionSignal.
         """
         candidates = self.construct_candidates(fps_signals, bitrate_signals, resource_signals)
         all_evaluations: List[CandidateEvaluation] = []
@@ -689,7 +707,6 @@ class FuzzyAdaptiveDecisionEngine:
             score = self.defuzzify_centroid(rule_acts)
 
             if score is None:
-                # Zero-Activation Fallback Policy
                 eval_item = CandidateEvaluation(
                     candidate_id=cand_id,
                     edge_id=cand["edge_id"],
@@ -757,22 +774,29 @@ class FuzzyAdaptiveDecisionEngine:
                 warnings=list(set(all_warnings)) + ["all_candidates_failed_hard_feasibility_gate_or_zero_activation"],
             )
 
-        # Filter by minimum suitability threshold
-        eligible_evaluations = [
-            e
-            for e in feasible_evaluations
-            if e.defuzzified_suitability is not None
-            and e.defuzzified_suitability >= self.min_suitability_threshold
-        ]
-
-        if not eligible_evaluations:
-            for f_item in feasible_evaluations:
-                rej_dict = f_item.to_dict()
+        # Filter by minimum suitability threshold AND valid quality evidence selection requirement
+        # A candidate with quality_tier == "unevaluable" cannot be selected as final SR candidate!
+        eligible_evaluations = []
+        for e in feasible_evaluations:
+            if e.defuzzified_suitability is None or e.defuzzified_suitability < self.min_suitability_threshold:
+                rej_dict = e.to_dict()
                 rej_dict["rejection_reasons"] = [
                     f"below_min_suitability_threshold_{self.min_suitability_threshold}"
                 ]
                 rejected_items.append(rej_dict)
+            elif e.quality_tier == "unevaluable":
+                rej_dict = e.to_dict()
+                rej_dict["rejection_reasons"] = [
+                    "candidate_lacks_valid_quality_evidence_cannot_be_selected"
+                ]
+                rejected_items.append(rej_dict)
+                all_warnings.append(
+                    f"candidate_{e.candidate_id}_has_unevaluable_quality_cannot_be_selected_as_final_sr_candidate"
+                )
+            else:
+                eligible_evaluations.append(e)
 
+        if not eligible_evaluations:
             return FuzzyDecisionSignal(
                 decision="no_suitable_candidate",
                 selected_candidate=None,
@@ -794,7 +818,7 @@ class FuzzyAdaptiveDecisionEngine:
                 },
                 rule_inference_metadata={"rule_count": 8, "inference_engine": "Mamdani_Centroid"},
                 warnings=list(set(all_warnings))
-                + [f"no_candidate_met_min_suitability_threshold_{self.min_suitability_threshold}"],
+                + ["no_candidate_met_suitability_threshold_and_quality_evidence_requirement"],
             )
 
         # Explicit Deterministic Tie-Breaking Policy:
@@ -828,7 +852,6 @@ class FuzzyAdaptiveDecisionEngine:
         )
 
         winning_eval = sorted_eligible[0]
-        winning_cand = next(c for c in candidates if c["candidate_id"] == winning_eval.candidate_id)
 
         selected_dict = {
             "candidate_id": winning_eval.candidate_id,
@@ -867,6 +890,7 @@ class FuzzyAdaptiveDecisionEngine:
                 "inference_engine": "Mamdani_Centroid",
                 "defuzzification_domain": "[0, 100]",
                 "zero_activation_policy": "return_none_unevaluable",
+                "quality_evidence_selection_requirement": "enforced_non_unevaluable",
             },
             warnings=list(set(all_warnings)),
         )

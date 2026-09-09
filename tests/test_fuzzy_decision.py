@@ -141,12 +141,10 @@ def test_single_feasible_candidate():
 def test_multiple_feasible_candidates_highest_suitability_selected():
     engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
     
-    # Candidate 1 (edge_01): Heavy CPU load (80%), lower RT ratio (0.85)
     fps_1 = create_sample_fps_signal(real_time_ratio=0.85, base_representation_id="360p")
     bitrate_1 = create_sample_bitrate_signal(saving_percent=30.0, base_representation_id="360p")
     resource_1 = create_sample_resource_signal(edge_id="edge_01", cpu_util=80.0, base_representation_id="360p")
 
-    # Candidate 2 (edge_02): Idle CPU (15%), high RT ratio (1.4), high BW saving (65%)
     fps_2 = create_sample_fps_signal(real_time_ratio=1.4, base_representation_id="480p")
     bitrate_2 = create_sample_bitrate_signal(saving_percent=65.0, base_representation_id="480p")
     resource_2 = create_sample_resource_signal(edge_id="edge_02", cpu_util=15.0, base_representation_id="480p")
@@ -188,7 +186,6 @@ def test_cuda_device_aware_resource_condition():
     """Verify CUDA candidates evaluate GPU load rather than CPU utilization alone."""
     engine = FuzzyAdaptiveDecisionEngine(min_suitability_threshold=35.0)
 
-    # CUDA candidate with idle CPU (10%) but overloaded GPU (90%)
     fps = [create_sample_fps_signal(device="cuda")]
     bitrate = [create_sample_bitrate_signal(device="cuda")]
     resource = [create_sample_resource_signal(device="cuda", gpu_available=True, cpu_util=10.0, gpu_util=90.0)]
@@ -196,7 +193,6 @@ def test_cuda_device_aware_resource_condition():
     result = engine.evaluate_candidates(fps, bitrate, resource)
     eval_item = result.candidate_evaluations[0]
 
-    # Verify resource condition fuzzification saw high GPU load (90%) -> headroom 0.10 (constrained)
     res_fuzz = eval_item["fuzzified_inputs"]["resource_condition"]
     assert res_fuzz["constrained"] > 0.0
     assert res_fuzz["available"] == 0.0
@@ -232,19 +228,49 @@ def test_minimum_suitability_threshold():
     assert result.selected_candidate is None
 
 
-def test_missing_quality_metrics_handling():
-    """Verify missing quality metrics yield 'unevaluable' quality tier without fake 0.5 membership."""
+def test_unevaluable_quality_cannot_be_selected_as_final_sr_candidate():
+    """Verify candidates with unevaluable quality are evaluated but CANNOT be selected as final SR candidate."""
     engine = FuzzyAdaptiveDecisionEngine()
 
-    fps = [create_sample_fps_signal()]
+    fps = [create_sample_fps_signal(real_time_ratio=1.2)]
     bitrate = [create_sample_bitrate_signal(quality_evaluable=False)]
-    resource = [create_sample_resource_signal()]
+    resource = [create_sample_resource_signal(cpu_util=20.0, bw_mbps=100.0)]
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
-    assert result.decision == "selected"
+    # Candidate remains evaluated in candidate_evaluations
+    assert len(result.candidate_evaluations) == 1
+    assert result.candidate_evaluations[0]["quality_tier"] == "unevaluable"
+    # But decision MUST be no_suitable_candidate because quality evidence is lacking
+    assert result.decision == "no_suitable_candidate"
+    assert result.selected_candidate is None
+    assert any("cannot_be_selected" in r for r in result.rejected_candidates[0]["rejection_reasons"])
+
+
+def test_contradictory_quality_metrics_classified_poor_not_good():
+    """Verify conservative quality policy classifies contradictory metrics (e.g. VMAF=40, PSNR=36) as 'poor'."""
+    engine = FuzzyAdaptiveDecisionEngine()
+
+    bitrate_sig = create_sample_bitrate_signal(vmaf=40.0, psnr=36.0, ssim=0.70)
+    q_tier, warnings = engine.classify_quality_suitability(bitrate_sig)
+    assert q_tier == "poor"
+    assert any("contradictory_or_poor_quality_metric_detected" in w for w in warnings)
+
+
+def test_r4_constrained_resource_or_poor_network_prevents_medium_suitability():
+    """Verify R4 cannot award medium suitability when network is poor or resource is constrained."""
+    engine = FuzzyAdaptiveDecisionEngine()
+
+    # RT ratio good, BW saving medium, but network is poor (2 Mbps)
+    fps = [create_sample_fps_signal(real_time_ratio=1.2)]
+    bitrate = [create_sample_bitrate_signal(saving_percent=35.0)]
+    resource = [create_sample_resource_signal(cpu_util=20.0, bw_mbps=2.0)]
+
+    result = engine.evaluate_candidates(fps, bitrate, resource)
     eval_item = result.candidate_evaluations[0]
-    assert eval_item["quality_tier"] == "unevaluable"
-    assert eval_item["fuzzified_inputs"]["quality"] == {"good": 0.0, "acceptable": 0.0, "poor": 0.0}
+    # R4 firing strength should be 0.0 because network is poor
+    assert eval_item["rule_activations"]["medium"] == 0.0
+    # R7 should fire low
+    assert eval_item["rule_activations"]["low"] > 0.0
 
 
 def test_missing_network_telemetry_handling():
@@ -256,7 +282,6 @@ def test_missing_network_telemetry_handling():
     resource[0].network_telemetry = {}
 
     result = engine.evaluate_candidates(fps, bitrate, resource)
-    assert result.decision == "selected"
     eval_item = result.candidate_evaluations[0]
     assert eval_item["fuzzified_inputs"]["network_condition"] == {"good": 0.0, "moderate": 0.0, "poor": 0.0}
 

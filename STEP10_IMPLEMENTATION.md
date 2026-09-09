@@ -26,7 +26,7 @@ Every candidate configuration preserves:
 
 ---
 
-## 2. Hard Feasibility Gate
+## 2. Hard Feasibility Gate & Quality Selection Requirement
 
 Before fuzzy inference, candidates are filtered through a strict Hard Feasibility Gate. Hard infeasibility cannot be overridden by fuzzy scoring.
 
@@ -39,7 +39,10 @@ A candidate is rejected if:
 
 *Soft Feasibility Note*: `real_time_ratio < 1.0` (e.g. $0.85$ `near_realtime`) remains hard-feasible; soft real-time feasibility tiers are evaluated by the fuzzy inference engine.
 
-All hard-rejected candidates are logged in `rejected_candidates` with explicit `rejection_reasons`.
+### Strict Quality Evidence Selection Requirement
+While candidates lacking visual quality metrics (`quality_tier == "unevaluable"`) remain evaluable for FPS and resource load analysis, **they CANNOT be selected as the final SR decision candidate**. If the top-scoring candidate lacks quality evidence, selection is rejected with `decision = "no_suitable_candidate"` and warning `"candidate_lacks_valid_quality_evidence_cannot_be_selected"`.
+
+All hard-rejected or quality-selection-rejected candidates are logged in `rejected_candidates` with explicit `rejection_reasons`.
 
 ---
 
@@ -60,12 +63,12 @@ Percentage bandwidth saving relative to native reference stream.
 - `medium`: Triangle $[15.0, 35.0, 55.0]$ — Centered around $35\%$ saving.
 - `high`: Trapezoid $[45.0, 65.0, 100.0, 100.0]$ — Savings $\ge 65\%$ are fully high.
 
-### Input 3: `quality_suitability` (Non-Weighted Qualitative Classification)
-To prevent creating an arbitrary synthetic scalar average score ($q = \frac{\text{VMAF}+\text{PSNR}+\text{SSIM}}{3}$), quality evidence is classified into discrete qualitative tiers:
-- `"good"`: VMAF $\ge 80.0$, PSNR $\ge 35.0$, or SSIM $\ge 0.92$.
-- `"acceptable"`: VMAF $\ge 60.0$, PSNR $\ge 30.0$, or SSIM $\ge 0.85$.
-- `"poor"`: VMAF $< 60.0$, PSNR $< 30.0$, or SSIM $< 0.85$.
-- `"unevaluable"`: `quality_evaluable == False` or no valid numerical metrics.
+### Input 3: `quality_suitability` (Conservative Non-Contradictory Evidence Policy)
+To avoid allowing a single metric to override contradictory poor metrics (e.g. VMAF=40 with PSNR=36), visual quality evidence is classified using a conservative non-contradictory policy:
+- `"good"`: At least one metric meets high threshold ($\text{VMAF} \ge 80 / \text{PSNR} \ge 35 / \text{SSIM} \ge 0.92$) **AND NO available metric is below poor threshold** ($\text{VMAF} < 60 / \text{PSNR} < 30 / \text{SSIM} < 0.85$).
+- `"poor"`: **ANY available metric is below poor threshold** ($\text{VMAF} < 60 / \text{PSNR} < 30 / \text{SSIM} < 0.85$).
+- `"acceptable"`: At least one metric available, no metric is poor, but high threshold is not met.
+- `"unevaluable"`: `quality_evaluable == False` or no valid numerical metrics present.
 *Missing Data Policy*: If quality is `"unevaluable"`, fuzzy membership is $\{good: 0.0, acceptable: 0.0, poor: 0.0\}$. **No fake 0.5 membership is fabricated.** Positive quality rules do not activate.
 
 ### Input 4: `edge_resource_condition` (Device-Aware Resource Headroom $c \in [0.0, 1.0]$)
@@ -95,7 +98,7 @@ The rule base uses AND = $\min()$ and OR = $\max()$ antecedent operators:
 | **R1** | `real_time_ratio` IS good **AND** `bandwidth_saving` IS high **AND** `quality` IS good **AND** `resource_condition` IS available **AND** `network_condition` IS good | `very_high` | Optimal streaming configuration |
 | **R2** | `real_time_ratio` IS good **AND** (`bandwidth_saving` IS high OR medium) **AND** (`quality` IS good OR acceptable) **AND** (`resource_condition` IS available OR moderate) | `high` | Strong performance with acceptable quality and compute |
 | **R3** | `real_time_ratio` IS good **AND** (`bandwidth_saving` IS high OR medium) **AND** (`resource_condition` IS available OR moderate) | `high` | High bandwidth saving with compute headroom |
-| **R4** | (`real_time_ratio` IS good OR moderate) **AND** (`bandwidth_saving` IS medium OR low) | `medium` | Balanced trade-off candidate |
+| **R4** | (`real_time_ratio` IS good OR moderate) **AND** (`bandwidth_saving` IS medium OR low) **AND** (`quality` IS good OR acceptable) **AND** (`resource_condition` IS available OR moderate) **AND** (`network_condition` IS good OR moderate) | `medium` | Balanced non-poor operational candidate |
 | **R5** | `real_time_ratio` IS moderate **AND** `resource_condition` IS moderate | `medium` | Moderate operational condition |
 | **R6** | `bandwidth_saving` IS low **AND** `quality` IS poor | `low` | Minimal bandwidth gain for low visual quality |
 | **R7** | `network_condition` IS poor **OR** `resource_condition` IS constrained | `low` | Adverse network path or high resource load |
@@ -124,8 +127,9 @@ If total aggregated rule activation area is $0.0$ ($\int \mu_{\text{agg}}(y) dy 
 ## 6. Selection, Minimum Threshold, & Deterministic Tie-Breaking
 
 1. **Minimum Suitability Threshold**: Configurable operational parameter `min_suitability_threshold` (default: $35.0$).
-2. **No Suitable Candidate**: If no candidate reaches $35.0$, returns `decision = "no_suitable_candidate"`.
-3. **Explicit Deterministic Tie-Breaking Policy**: Candidates meeting the threshold are sorted by:
+2. **Quality Evidence Selection Requirement**: Candidates with `quality_tier == "unevaluable"` CANNOT be selected as the final SR decision candidate.
+3. **No Suitable Candidate**: If no candidate reaches $35.0$ or satisfies quality evidence requirements, returns `decision = "no_suitable_candidate"`.
+4. **Explicit Deterministic Tie-Breaking Policy**: Candidates meeting threshold and quality requirements are sorted by:
    - Primary: `defuzzified_suitability` (descending)
    - Secondary: `real_time_ratio` (descending)
    - Tertiary: `bitrate_saving_percent` (descending)
@@ -170,7 +174,8 @@ If total aggregated rule activation area is $0.0$ ($\int \mu_{\text{agg}}(y) dy 
     "rule_count": 8,
     "inference_engine": "Mamdani_Centroid",
     "defuzzification_domain": "[0, 100]",
-    "zero_activation_policy": "return_none_unevaluable"
+    "zero_activation_policy": "return_none_unevaluable",
+    "quality_evidence_selection_requirement": "enforced_non_unevaluable"
   },
   "warnings": [],
   "baseline_comparison_ready": true
@@ -186,7 +191,7 @@ Command executed:
 D:\Abishek\venv\Scripts\python.exe -m pytest tests/test_fuzzy_decision.py tests/test_edge_selection.py tests/test_bitrate_adaptation.py tests/test_fps_adaptation.py tests/test_remote_sr.py tests/test_foundation.py -v
 ```
 
-### Test Results (69/69 Passed):
+### Test Results (71/71 Passed):
 - `test_single_feasible_candidate`: Passed
 - `test_multiple_feasible_candidates_highest_suitability_selected`: Passed
 - `test_hard_infeasible_candidate_rejected`: Passed
@@ -194,7 +199,9 @@ D:\Abishek\venv\Scripts\python.exe -m pytest tests/test_fuzzy_decision.py tests/
 - `test_cuda_device_aware_resource_condition`: Passed (Verified GPU load evaluated for CUDA)
 - `test_tie_breaking_determinism`: Passed
 - `test_minimum_suitability_threshold`: Passed
-- `test_missing_quality_metrics_handling`: Passed (Verified "unevaluable" tier without fake 0.5)
+- `test_unevaluable_quality_cannot_be_selected_as_final_sr_candidate`: Passed (Verified unevaluable quality candidates cannot be selected)
+- `test_contradictory_quality_metrics_classified_poor_not_good`: Passed (Verified VMAF=40 / PSNR=36 classified poor)
+- `test_r4_constrained_resource_or_poor_network_prevents_medium_suitability`: Passed (Verified R4 balance)
 - `test_missing_network_telemetry_handling`: Passed
 - `test_missing_resource_telemetry_handling`: Passed
 - `test_soft_realtime_ratio_below_1_feasible`: Passed (Verified real_time_ratio=0.85 remains hard-feasible)
