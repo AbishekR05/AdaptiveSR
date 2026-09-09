@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html class="dark h-full bg-[#0a0d14] text-slate-100" lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <title>AdaptiveSR Studio - AI Video Super-Resolution & Enhancement</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            obsidian: '#0a0d14',
+            surface: {
+              800: '#151b26',
+              900: '#0e131d',
+              700: '#1e2638'
+            },
+            accent: {
+              cyan: '#06b6d4',
+              violet: '#6366f1',
+              emerald: '#10b981'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace']
+          }
+        }
+      }
+    };
+  </script>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com" rel="preconnect">
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #0e131d; }
+    ::-webkit-scrollbar-thumb { background: #252e3f; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3b465c; }
+    .grid-bg-overlay {
+      background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 0);
+      background-size: 24px 24px;
+    }
+    .slider-handle {
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.45);
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans antialiased overflow-hidden select-none bg-[#090c12]">
+
+<!-- Hidden File Input -->
+<input type="file" id="file-input" accept="video/*" class="hidden">
+
+<!-- TOP HEADER NAVIGATION BAR -->
+<header class="h-14 border-b border-slate-800/80 bg-surface-900/90 backdrop-blur-md px-5 flex items-center justify-between shrink-0 z-30">
+  <div class="flex items-center gap-4">
+    <div class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-accent-violet to-accent-cyan flex items-center justify-center shadow-lg shadow-cyan-500/20">
+        <svg class="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </div>
+      <div class="flex flex-col">
+        <div class="flex items-center gap-2">
+          <span class="font-bold tracking-tight text-white text-base">Adaptive<span class="text-accent-cyan">SR</span> Studio</span>
+          <span class="text-[10px] font-mono font-medium uppercase px-1.5 py-0.5 rounded bg-cyan-500/10 text-accent-cyan border border-cyan-500/25">v2.4 Core</span>
+        </div>
+      </div>
+    </div>
+    <div class="h-5 w-[1px] bg-slate-800 hidden sm:block"></div>
+    
+    <!-- Video File Meta Chips -->
+    <div class="hidden lg:flex items-center gap-2 text-xs font-mono text-slate-400">
+      <span id="chip-filename" class="bg-surface-800 border border-slate-800 text-slate-300 px-2.5 py-1 rounded-md flex items-center gap-1.5">
+        <svg class="w-3 h-3 text-accent-cyan" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm3 2h6v2H7V5zm8 4v2H5V9h10zm-6 4h6v2H9v-2z"></path></svg>
+        No video loaded
+      </span>
+      <span id="chip-res" class="bg-surface-800 border border-slate-800 px-2.5 py-1 rounded-md">-- → --</span>
+      <span id="chip-fps" class="bg-surface-800 border border-slate-800 px-2.5 py-1 rounded-md text-slate-300">-- FPS</span>
+    </div>
+  </div>
+
+  <!-- Header Action Controls & Backend Engine Status -->
+  <div class="flex items-center gap-3">
+    <div id="cuda-status-badge" class="hidden md:flex items-center gap-2 text-xs font-mono bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-full text-emerald-400">
+      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span id="engine-status-text">Engine Ready</span>
+    </div>
+
+    <button id="btn-load-sample" class="px-3 py-1.5 text-xs font-medium text-slate-300 bg-surface-800 hover:bg-surface-700 border border-slate-700 rounded-lg transition flex items-center gap-1.5" title="Load Sample Video">
+      <svg class="w-3.5 h-3.5 text-accent-cyan" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21m-1.5 0H12" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      Sample Video
+    </button>
+
+    <button id="btn-upload-header" class="px-3.5 py-1.5 text-xs font-medium text-slate-200 bg-surface-800 hover:bg-surface-700 border border-slate-700 rounded-lg transition flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5 text-accent-cyan" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      Upload Video
+    </button>
+
+    <button id="btn-export" disabled class="px-4 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-accent-cyan to-accent-violet disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 active:scale-95 shadow-md shadow-cyan-500/20 rounded-lg transition flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      Export Video
+    </button>
+  </div>
+</header>
+
+<!-- MAIN CONTENT AREA -->
+<main class="flex-1 flex overflow-hidden">
+  
+  <!-- CENTER STAGE: VIDEO COMPARISON WORKSPACE -->
+  <section class="flex-1 flex flex-col min-w-0 bg-[#07090f] relative overflow-hidden">
+    
+    <!-- Viewport Sub-header -->
+    <div class="h-10 px-5 border-b border-slate-800/60 bg-surface-900/50 flex items-center justify-between text-xs text-slate-400 font-mono">
+      <div class="flex items-center gap-3">
+        <span class="flex items-center gap-1.5 text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span> Dual Comparison View
+        </span>
+        <span class="text-slate-600">|</span>
+        <span class="text-slate-500">View Mode: <strong id="view-mode-label" class="text-slate-300 font-medium">Side-by-Side Dual</strong></span>
+        <span class="text-slate-600">|</span>
+        <span class="text-cyan-400/90 text-[11px]">Synchronized Scrubber Sync</span>
+      </div>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <span class="text-slate-400 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>ORIGINAL [A]</span>
+        <span class="text-slate-600">vs</span>
+        <span class="text-cyan-400 font-semibold tracking-wide flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>ADAPTIVESR [B]</span>
+      </div>
+    </div>
+
+    <!-- Processing Overlay Spinner -->
+    <div id="processing-overlay" class="hidden absolute inset-0 bg-surface-900/90 backdrop-blur-md z-40 flex flex-col items-center justify-center gap-4 text-center">
+      <div class="w-12 h-12 rounded-full border-4 border-slate-800 border-t-accent-cyan animate-spin"></div>
+      <div class="space-y-1">
+        <h3 class="text-sm font-bold font-mono text-white tracking-wide">AdaptiveSR Inference in Progress...</h3>
+        <p id="processing-msg" class="text-xs font-mono text-slate-400">Running Steps 7–9 signals, Step 10 Mamdani decision, and PyTorch TinySR model inference on video frames</p>
+      </div>
+    </div>
+
+    <!-- Error Banner Overlay -->
+    <div id="error-banner" class="hidden absolute top-4 left-4 right-4 z-50 bg-red-950/90 border border-red-500/50 p-4 rounded-xl shadow-2xl flex items-center justify-between text-xs font-mono">
+      <div class="flex items-center gap-3 text-red-300">
+        <svg class="w-5 h-5 text-red-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <span id="error-text">Execution Error</span>
+      </div>
+      <button id="btn-close-error" class="text-slate-400 hover:text-white px-2 py-1 bg-red-900/40 rounded border border-red-700/50">Dismiss</button>
+    </div>
+
+    <!-- Video Stage Viewport -->
+    <div class="flex-1 relative flex items-center justify-center p-4 grid-bg-overlay overflow-hidden">
+      <div class="w-full max-w-6xl h-full flex flex-col justify-center gap-2 select-none">
+        
+        <!-- DUAL CARDS CONTAINER -->
+        <div id="video-cards-container" class="grid grid-cols-2 gap-4 flex-1 items-center relative">
+          
+          <!-- ORIGINAL (BEFORE) CARD -->
+          <div id="card-before" class="relative flex flex-col rounded-xl overflow-hidden border border-slate-800/80 bg-surface-900/90 shadow-xl group h-full max-h-[75vh]">
+            <div class="px-3.5 py-2 border-b border-slate-800 bg-[#07090f] flex items-center justify-between text-xs font-mono">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                <span class="font-semibold text-slate-300">ORIGINAL (BEFORE)</span>
+              </div>
+              <span id="before-res-tag" class="px-2 py-0.5 rounded bg-black/60 border border-slate-800 text-[10px] text-slate-400">Low-Res Input</span>
+            </div>
+            
+            <div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+              <video id="video-before" class="w-full h-full object-contain" playsinline preload="auto"></video>
+              <div id="before-empty-placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-500 bg-surface-900/60 p-6 text-center">
+                <svg class="w-10 h-10 text-slate-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span class="text-xs font-mono">Select or upload a video to begin</span>
+              </div>
+              <div class="absolute top-3 left-3 z-10 pointer-events-none">
+                <span class="px-2.5 py-1 rounded bg-black/75 backdrop-blur border border-white/10 text-[11px] font-mono text-slate-300 uppercase tracking-wider">Source Input</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ADAPTIVESR (AFTER) CARD -->
+          <div id="card-after" class="relative flex flex-col rounded-xl overflow-hidden border border-cyan-500/30 bg-surface-900/90 shadow-2xl shadow-cyan-500/10 group h-full max-h-[75vh]">
+            <div class="px-3.5 py-2 border-b border-cyan-500/25 bg-[#07090f] flex items-center justify-between text-xs font-mono">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                <span class="font-semibold text-cyan-300">ADAPTIVESR (AFTER)</span>
+              </div>
+              <span id="after-res-tag" class="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30 text-[10px] font-semibold text-accent-cyan">Upscaled Output</span>
+            </div>
+
+            <div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+              <video id="video-after" class="w-full h-full object-contain" playsinline preload="auto"></video>
+              <div id="after-empty-placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-500 bg-surface-900/60 p-6 text-center">
+                <svg class="w-10 h-10 text-cyan-500/40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <span class="text-xs font-mono">Click "Start AdaptiveSR" to process</span>
+              </div>
+              <div class="absolute top-3 left-3 z-10 pointer-events-none">
+                <span id="after-badge" class="px-2.5 py-1 rounded bg-cyan-950/90 backdrop-blur border border-cyan-400/40 text-[11px] font-mono font-semibold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>AdaptiveSR Enhanced
+                </span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- PLAYER CONTROLS & TIMELINE SCRUBBER BAR -->
+    <div class="border-t border-slate-800 bg-surface-900/95 p-3.5 shrink-0">
+      <div class="max-w-5xl mx-auto flex flex-col gap-2.5">
+        
+        <!-- Timeline Track Scrubber -->
+        <div class="relative w-full h-2 bg-slate-800/80 rounded-full cursor-pointer group flex items-center">
+          <input type="range" id="timeline-scrubber" min="0" max="100" value="0" step="0.1" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+          <div id="timeline-progress" class="absolute left-0 top-0 bottom-0 w-[0%] bg-gradient-to-r from-accent-cyan to-accent-violet rounded-full pointer-events-none"></div>
+        </div>
+
+        <!-- Controls Button Row -->
+        <div class="flex items-center justify-between">
+          
+          <!-- Left Controls: Step Back, Play/Pause, Step Forward, Timecode -->
+          <div class="flex items-center gap-3">
+            <button id="btn-step-back" class="w-8 h-8 rounded-lg bg-surface-800 hover:bg-surface-700 border border-slate-700 flex items-center justify-center text-slate-200 hover:text-white transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15.75 19.5L8.25 12l7.5-7.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </button>
+
+            <button id="btn-play" class="w-9 h-9 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold flex items-center justify-center shadow-md shadow-cyan-500/20 transition">
+              <svg id="icon-play" class="w-4 h-4 fill-current ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>
+              <svg id="icon-pause" class="w-4 h-4 fill-current hidden" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>
+            </button>
+
+            <button id="btn-step-forward" class="w-8 h-8 rounded-lg bg-surface-800 hover:bg-surface-700 border border-slate-700 flex items-center justify-center text-slate-200 hover:text-white transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8.25 4.5l7.5 7.5-7.5 7.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </button>
+
+            <div class="text-xs font-mono text-slate-400 ml-2">
+              <span id="time-current" class="text-white font-medium">00:00.00</span> / <span id="time-duration">00:00.00</span>
+            </div>
+          </div>
+
+          <!-- Center Controls: Frame counter -->
+          <div class="hidden sm:flex items-center gap-2">
+            <span id="frame-counter" class="px-2 py-0.5 rounded bg-surface-800 text-[11px] font-mono text-slate-400 border border-slate-800">FRAME --</span>
+          </div>
+
+          <!-- Right Controls: View Mode & Reset -->
+          <div class="flex items-center gap-2 text-slate-400">
+            <button id="btn-toggle-view" class="p-1.5 rounded hover:bg-surface-800 hover:text-white transition flex items-center gap-1 text-xs font-mono" title="Toggle Dual / Split View">
+              <svg class="w-4 h-4 text-accent-cyan" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect height="16" rx="2" width="18" x="3" y="4"></rect><path d="M12 4v16"></path></svg>
+              Dual View
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- RIGHT SIDEBAR: CONTROL & TELEMETRY PANEL -->
+  <aside class="w-80 lg:w-96 border-l border-slate-800/80 bg-surface-900 flex flex-col shrink-0 overflow-y-auto">
+    
+    <!-- Panel Header -->
+    <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+      <h2 class="text-xs font-mono uppercase tracking-widest text-slate-400 font-semibold flex items-center gap-2">
+        <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> Parameters & Pipeline
+      </h2>
+      <span id="sidebar-engine-tag" class="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-800 text-slate-400 border border-slate-700/60">PyTorch FP32</span>
+    </div>
+
+    <div class="p-4 space-y-6 flex-1">
+      
+      <!-- SECTION 1: VIDEO INFO -->
+      <section class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-accent-cyan" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            Video Info
+          </h3>
+          <span id="info-codec-badge" class="text-[10px] font-mono text-slate-500">H.264 MP4</span>
+        </div>
+        <div class="bg-surface-800/60 border border-slate-800 rounded-lg p-3 text-xs space-y-2.5 font-mono">
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Input Resolution:</span>
+            <span id="info-input-res" class="text-slate-200 font-medium">N/A</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Target Output:</span>
+            <span id="info-output-res" class="text-accent-cyan font-semibold">N/A</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Size & Duration:</span>
+            <span id="info-size-dur" class="text-slate-300">N/A</span>
+          </div>
+          <div class="flex items-center justify-between border-t border-slate-800 pt-2 text-[11px]">
+            <span class="text-slate-400">Source FPS:</span>
+            <span id="info-source-fps" class="text-slate-400">N/A</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 2: ADAPTIVE DECISION -->
+      <section class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-accent-violet" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            Adaptive Decision
+          </h3>
+          <span class="text-[10px] text-accent-cyan font-mono font-medium">AUTO-MAMDANI</span>
+        </div>
+
+        <div class="bg-cyan-950/30 border border-cyan-500/30 rounded-lg p-2.5 text-[11px] font-mono text-cyan-300 flex items-center gap-2">
+          <svg class="w-4 h-4 text-cyan-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>AdaptiveSR selected this configuration</span>
+        </div>
+
+        <!-- Selected Configuration Card -->
+        <div class="bg-surface-800/60 border border-slate-800 rounded-lg p-3 text-xs space-y-2.5 font-mono">
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Delivery Mode:</span>
+            <span id="dec-delivery-mode" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-surface-700 text-slate-300">--</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Model & Scale:</span>
+            <span id="dec-model-scale" class="text-slate-200 font-bold">--</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Execution Device:</span>
+            <span id="dec-device" class="text-slate-300">--</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Selected Edge:</span>
+            <span id="dec-edge" class="text-slate-300">--</span>
+          </div>
+          <div class="flex items-center justify-between border-t border-slate-800 pt-2 text-[11px]">
+            <span class="text-slate-400">Suitability Tier:</span>
+            <span id="dec-tier" class="text-accent-cyan font-medium">--</span>
+          </div>
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-slate-400">Fuzzy Score:</span>
+            <span id="dec-score" class="text-slate-300">--</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 3: ENGINE TELEMETRY -->
+      <section class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            Engine Telemetry
+          </h3>
+          <span class="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> LIVE
+          </span>
+        </div>
+
+        <div class="bg-[#0b0f17] border border-slate-800 rounded-lg p-3 font-mono text-xs space-y-3">
+          <!-- Inference FPS & Latency -->
+          <div class="grid grid-cols-2 gap-3">
+            <div class="bg-surface-800/60 p-2.5 rounded border border-slate-800">
+              <div class="text-slate-500 text-[10px]">INFERENCE FPS</div>
+              <div id="telem-fps" class="text-lg font-bold text-white mt-0.5">N/A</div>
+            </div>
+            <div class="bg-surface-800/60 p-2.5 rounded border border-slate-800">
+              <div class="text-slate-500 text-[10px]">LATENCY</div>
+              <div id="telem-latency" class="text-lg font-bold text-cyan-400 mt-0.5">N/A</div>
+            </div>
+          </div>
+
+          <!-- GPU Load bar -->
+          <div class="space-y-1.5">
+            <div class="flex justify-between text-[11px]">
+              <span class="text-slate-400">GPU Compute:</span>
+              <span id="telem-gpu-text" class="text-slate-200 font-bold">N/A</span>
+            </div>
+            <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              <div id="telem-gpu-bar" class="h-full bg-gradient-to-r from-accent-cyan to-accent-violet rounded-full" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- Buffer Health -->
+          <div class="flex items-center justify-between text-[11px] border-t border-slate-800/70 pt-2">
+            <span class="text-slate-400">Buffer Health:</span>
+            <span id="telem-buffer" class="text-emerald-400 font-semibold">N/A</span>
+          </div>
+
+          <!-- Network Bandwidth / RTT -->
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-slate-400">Network Bandwidth / RTT:</span>
+            <span id="telem-network" class="text-slate-300">N/A</span>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Sidebar Action Footer -->
+    <div class="p-4 border-t border-slate-800 bg-surface-900/90 space-y-2.5">
+      <button id="btn-process" disabled class="w-full py-2.5 px-4 bg-gradient-to-r from-accent-cyan to-accent-violet hover:from-cyan-400 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg shadow-lg shadow-cyan-500/20 active:scale-[0.99] transition flex items-center justify-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        Start AdaptiveSR / Apply & Render
+      </button>
+
+      <button id="btn-upload-sidebar" class="w-full py-2 px-4 bg-surface-800 hover:bg-surface-700 border border-slate-700 text-slate-300 text-xs font-medium rounded-lg transition flex items-center justify-center gap-1.5">
+        <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        Upload New Video
+      </button>
+    </div>
+
+  </aside>
+
+</main>
+
+<!-- JAVASCRIPT APP LOGIC -->
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Elements
+  const videoBefore = document.getElementById('video-before');
+  const videoAfter = document.getElementById('video-after');
+  const placeholderBefore = document.getElementById('before-empty-placeholder');
+  const placeholderAfter = document.getElementById('after-empty-placeholder');
+  
+  const fileInput = document.getElementById('file-input');
+  const btnUploadHeader = document.getElementById('btn-upload-header');
+  const btnUploadSidebar = document.getElementById('btn-upload-sidebar');
+  const btnLoadSample = document.getElementById('btn-load-sample');
+  const btnProcess = document.getElementById('btn-process');
+  const btnExport = document.getElementById('btn-export');
+  const btnPlay = document.getElementById('btn-play');
+  const iconPlay = document.getElementById('icon-play');
+  const iconPause = document.getElementById('icon-pause');
+  const btnStepBack = document.getElementById('btn-step-back');
+  const btnStepForward = document.getElementById('btn-step-forward');
+  const btnToggleView = document.getElementById('btn-toggle-view');
+  
+  const timelineScrubber = document.getElementById('timeline-scrubber');
+  const timelineProgress = document.getElementById('timeline-progress');
+  const timeCurrent = document.getElementById('time-current');
+  const timeDuration = document.getElementById('time-duration');
+  const frameCounter = document.getElementById('frame-counter');
+  
+  const processingOverlay = document.getElementById('processing-overlay');
+  const processingMsg = document.getElementById('processing-msg');
+  const errorBanner = document.getElementById('error-banner');
+  const errorText = document.getElementById('error-text');
+  const btnCloseError = document.getElementById('btn-close-error');
+
+  // Header Chips
+  const chipFilename = document.getElementById('chip-filename');
+  const chipRes = document.getElementById('chip-res');
+  const chipFps = document.getElementById('chip-fps');
+  const engineStatusText = document.getElementById('engine-status-text');
+
+  // Sidebar Info
+  const infoInputRes = document.getElementById('info-input-res');
+  const infoOutputRes = document.getElementById('info-output-res');
+  const infoSizeDur = document.getElementById('info-size-dur');
+  const infoSourceFps = document.getElementById('info-source-fps');
+  const afterResTag = document.getElementById('after-res-tag');
+  const beforeResTag = document.getElementById('before-res-tag');
+
+  // Sidebar Decision
+  const decDeliveryMode = document.getElementById('dec-delivery-mode');
+  const decModelScale = document.getElementById('dec-model-scale');
+  const decDevice = document.getElementById('dec-device');
+  const decEdge = document.getElementById('dec-edge');
+  const decTier = document.getElementById('dec-tier');
+  const decScore = document.getElementById('dec-score');
+
+  // Sidebar Telemetry
+  const telemFps = document.getElementById('telem-fps');
+  const telemLatency = document.getElementById('telem-latency');
+  const telemGpuText = document.getElementById('telem-gpu-text');
+  const telemGpuBar = document.getElementById('telem-gpu-bar');
+  const telemBuffer = document.getElementById('telem-buffer');
+  const telemNetwork = document.getElementById('telem-network');
+
+  // State Variables
+  let currentVideoData = null;
+  let processedResultData = null;
+  let isPlaying = false;
+  let isDualView = true;
+
+  // 1. Fetch Backend System Status
+  fetch('/api/system_status')
+    .then(r => r.json())
+    .then(data => {
+      engineStatusText.textContent = `${data.device_name} Ready`;
+      document.getElementById('sidebar-engine-tag').textContent = data.device_name;
+    })
+    .catch(err => console.warn('Could not fetch system status:', err));
+
+  // 2. Upload Handlers
+  [btnUploadHeader, btnUploadSidebar].forEach(btn => {
+    btn.addEventListener('click', () => fileInput.click());
+  });
+
+  fileInput.addEventListener('change', async (e) => {
+    if (!e.target.files || !e.target.files[0]) return;
+    const file = e.target.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    showProcessing('Uploading and parsing video file...');
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Upload failed');
+      }
+      const data = await res.json();
+      onVideoLoaded(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      hideProcessing();
+    }
+  });
+
+  // 3. Load Sample Handler
+  btnLoadSample.addEventListener('click', async () => {
+    showProcessing('Loading sample low-resolution benchmark video...');
+    try {
+      const res = await fetch('/api/sample');
+      if (!res.ok) throw new Error('Failed to load sample video');
+      const data = await res.json();
+      onVideoLoaded(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      hideProcessing();
+    }
+  });
+
+  function onVideoLoaded(data) {
+    currentVideoData = data;
+    processedResultData = null;
+    hideError();
+
+    // Reset videos
+    videoBefore.src = data.url;
+    videoAfter.src = '';
+    videoAfter.load();
+    
+    placeholderBefore.classList.add('hidden');
+    placeholderAfter.classList.remove('hidden');
+
+    btnProcess.disabled = false;
+    btnExport.disabled = true;
+
+    // Update Header Chips
+    chipFilename.innerHTML = `
+      <svg class="w-3 h-3 text-accent-cyan" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm3 2h6v2H7V5zm8 4v2H5V9h10zm-6 4h6v2H9v-2z"></path></svg>
+      ${data.filename}
+    `;
+    chipRes.textContent = `${data.resolution} → Ready`;
+    chipFps.textContent = `${data.fps} FPS`;
+    beforeResTag.textContent = `${data.resolution} @ ${data.fps} FPS`;
+    afterResTag.textContent = `Awaiting AdaptiveSR`;
+
+    // Update Sidebar Section 1
+    infoInputRes.textContent = `${data.resolution} (${data.width}×${data.height})`;
+    infoOutputRes.textContent = `Awaiting Process`;
+    infoSizeDur.textContent = `${data.size_mb} MB • ${data.duration_seconds}s`;
+    infoSourceFps.textContent = `${data.fps} FPS (${data.frame_count} frames)`;
+
+    // Clear Decision & Telemetry
+    resetTelemetryDisplay();
+  }
+
+  // 4. Start AdaptiveSR Processing Handler
+  btnProcess.addEventListener('click', async () => {
+    if (!currentVideoData) return;
+
+    showProcessing('Executing AdaptiveSR runtime: Steps 7–9 signals → Step 10 Mamdani fuzzy decision → Step 6 model inference...');
+    btnProcess.disabled = true;
+
+    try {
+      const res = await fetch('/api/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video_id: currentVideoData.video_id,
+          stored_filename: currentVideoData.stored_filename,
+          min_suitability_threshold: 35.0,
+          fallback_representation_id: '360p'
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Processing failed');
+      }
+
+      const result = await res.json();
+      onProcessingComplete(result);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      hideProcessing();
+      btnProcess.disabled = false;
+    }
+  });
+
+  function onProcessingComplete(result) {
+    processedResultData = result;
+    const outMeta = result.output_metadata;
+    const dec = result.decision;
+    const telem = result.telemetry;
+
+    // Load upscaled output video
+    videoAfter.src = outMeta.url;
+    videoAfter.load();
+    placeholderAfter.classList.add('hidden');
+
+    btnExport.disabled = false;
+
+    // Header updates
+    chipRes.textContent = `${result.input_metadata.resolution} → ${outMeta.resolution}`;
+    afterResTag.textContent = `${outMeta.resolution} (AI Upscaled) @ ${outMeta.fps} FPS`;
+
+    // Sidebar Info updates
+    infoOutputRes.textContent = `${outMeta.resolution} (${outMeta.width}×${outMeta.height})`;
+
+    // Sidebar Decision updates
+    decDeliveryMode.textContent = dec.delivery_mode.toUpperCase();
+    if (dec.delivery_mode === 'sr') {
+      decDeliveryMode.className = 'px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-500/30';
+    } else if (dec.delivery_mode === 'native') {
+      decDeliveryMode.className = 'px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950 text-amber-400 border border-amber-500/30';
+    } else {
+      decDeliveryMode.className = 'px-2 py-0.5 rounded text-[10px] font-semibold bg-red-950 text-red-400 border border-red-500/30';
+    }
+
+    decModelScale.textContent = dec.model_id ? `${dec.model_id.toUpperCase()} (x${dec.scale || 2})` : 'Native Fallback';
+    decDevice.textContent = dec.device ? dec.device.toUpperCase() : 'N/A';
+    decEdge.textContent = dec.edge_id || 'N/A';
+    decTier.textContent = dec.suitability_tier ? dec.suitability_tier.toUpperCase() : 'N/A';
+    decScore.textContent = dec.fuzzy_suitability !== null ? `${dec.fuzzy_suitability.toFixed(1)} / 100` : 'N/A';
+
+    // Sidebar Telemetry updates (strictly no fabricated values)
+    telemFps.textContent = telem.inference_fps !== 'N/A' ? `${telem.inference_fps}` : 'N/A';
+    telemLatency.textContent = `${telem.processing_latency_ms} ms`;
+    
+    if (telem.gpu_utilization_pct !== 'N/A') {
+      telemGpuText.textContent = `${telem.gpu_utilization_pct}% (${telem.gpu_memory_used_mb} MB VRAM)`;
+      telemGpuBar.style.width = `${telem.gpu_utilization_pct}%`;
+    } else {
+      telemGpuText.textContent = 'N/A (CPU Mode)';
+      telemGpuBar.style.width = '0%';
+    }
+
+    telemBuffer.textContent = `${telem.buffer_seconds}s (Optimal)`;
+    telemNetwork.textContent = `${telem.measured_bandwidth_mbps} Mbps • ${telem.rtt_seconds * 1000} ms RTT`;
+  }
+
+  function resetTelemetryDisplay() {
+    decDeliveryMode.textContent = '--';
+    decDeliveryMode.className = 'px-2 py-0.5 rounded text-[10px] font-semibold bg-surface-700 text-slate-300';
+    decModelScale.textContent = '--';
+    decDevice.textContent = '--';
+    decEdge.textContent = '--';
+    decTier.textContent = '--';
+    decScore.textContent = '--';
+    telemFps.textContent = 'N/A';
+    telemLatency.textContent = 'N/A';
+    telemGpuText.textContent = 'N/A';
+    telemGpuBar.style.width = '0%';
+    telemBuffer.textContent = 'N/A';
+    telemNetwork.textContent = 'N/A';
+  }
+
+  // 5. Export Video Handler
+  btnExport.addEventListener('click', () => {
+    if (!processedResultData || !processedResultData.output_metadata.url) return;
+    const a = document.createElement('a');
+    a.href = processedResultData.output_metadata.url;
+    a.download = `AdaptiveSR_${processedResultData.output_metadata.resolution}_output.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  });
+
+  // 6. Playback Synchronization Controls
+  btnPlay.addEventListener('click', togglePlayPause);
+
+  function togglePlayPause() {
+    if (!currentVideoData) return;
+    if (isPlaying) {
+      pauseAll();
+    } else {
+      playAll();
+    }
+  }
+
+  function playAll() {
+    isPlaying = true;
+    iconPlay.classList.add('hidden');
+    iconPause.classList.remove('hidden');
+    videoBefore.play().catch(() => {});
+    if (processedResultData) videoAfter.play().catch(() => {});
+  }
+
+  function pauseAll() {
+    isPlaying = false;
+    iconPlay.classList.remove('hidden');
+    iconPause.classList.add('hidden');
+    videoBefore.pause();
+    videoAfter.pause();
+  }
+
+  // Sync timeline progress
+  videoBefore.addEventListener('timeupdate', () => {
+    if (!videoBefore.duration) return;
+    const pct = (videoBefore.currentTime / videoBefore.duration) * 100;
+    timelineScrubber.value = pct;
+    timelineProgress.style.width = `${pct}%`;
+
+    timeCurrent.textContent = formatTime(videoBefore.currentTime);
+    timeDuration.textContent = formatTime(videoBefore.duration);
+
+    if (currentVideoData && currentVideoData.fps) {
+      const frameNum = Math.floor(videoBefore.currentTime * currentVideoData.fps);
+      frameCounter.textContent = `FRAME ${frameNum}`;
+    }
+
+    // Sync slave video time if drift > 0.15s
+    if (processedResultData && Math.abs(videoAfter.currentTime - videoBefore.currentTime) > 0.15) {
+      videoAfter.currentTime = videoBefore.currentTime;
+    }
+  });
+
+  timelineScrubber.addEventListener('input', (e) => {
+    if (!videoBefore.duration) return;
+    const targetTime = (e.target.value / 100) * videoBefore.duration;
+    videoBefore.currentTime = targetTime;
+    if (processedResultData) videoAfter.currentTime = targetTime;
+  });
+
+  btnStepBack.addEventListener('click', () => {
+    if (!videoBefore.duration) return;
+    const fps = (currentVideoData && currentVideoData.fps) || 30;
+    videoBefore.currentTime = Math.max(0, videoBefore.currentTime - (1 / fps));
+    if (processedResultData) videoAfter.currentTime = videoBefore.currentTime;
+  });
+
+  btnStepForward.addEventListener('click', () => {
+    if (!videoBefore.duration) return;
+    const fps = (currentVideoData && currentVideoData.fps) || 30;
+    videoBefore.currentTime = Math.min(videoBefore.duration, videoBefore.currentTime + (1 / fps));
+    if (processedResultData) videoAfter.currentTime = videoBefore.currentTime;
+  });
+
+  function formatTime(seconds) {
+    if (isNaN(seconds)) return '00:00.00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 100);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+  }
+
+  // 7. View Mode Toggle (Side-by-side vs Split)
+  btnToggleView.addEventListener('click', () => {
+    isDualView = !isDualView;
+    document.getElementById('view-mode-label').textContent = isDualView ? 'Side-by-Side Dual' : 'Full Split View';
+  });
+
+  // UI Helpers
+  function showProcessing(msg) {
+    processingMsg.textContent = msg;
+    processingOverlay.classList.remove('hidden');
+  }
+
+  function hideProcessing() {
+    processingOverlay.classList.add('hidden');
+  }
+
+  function showError(msg) {
+    errorText.textContent = msg;
+    errorBanner.classList.remove('hidden');
+  }
+
+  function hideError() {
+    errorBanner.classList.add('hidden');
+  }
+
+  btnCloseError.addEventListener('click', hideError);
+});
+</script>
+
+</body>
+</html>
