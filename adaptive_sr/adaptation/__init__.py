@@ -18,6 +18,11 @@ from adaptive_sr.adaptation.edge_evaluator import (
     EdgeResourceSignal,
     EdgeResourceState,
 )
+from adaptive_sr.adaptation.fuzzy_engine import (
+    FuzzyAdaptiveDecisionEngine,
+    FuzzyDecisionSignal,
+    CandidateEvaluation,
+)
 
 __all__ = [
     "FPSAdapter",
@@ -28,4 +33,7 @@ __all__ = [
     "EdgeResourceEvaluator",
     "EdgeResourceSignal",
     "EdgeResourceState",
+    "FuzzyAdaptiveDecisionEngine",
+    "FuzzyDecisionSignal",
+    "CandidateEvaluation",
 ]
