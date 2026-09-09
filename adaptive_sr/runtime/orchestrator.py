@@ -422,6 +422,7 @@ class AdaptiveSRRuntime:
 
         if fuzzy_decision.decision == "selected" and fuzzy_decision.selected_candidate:
             sel = fuzzy_decision.selected_candidate
+            sel_eligible = sel.get("decision_eligible", True)
             requested_conf = {
                 "edge_id": sel["edge_id"],
                 "representation_id": sel["base_representation_id"],
@@ -435,6 +436,7 @@ class AdaptiveSRRuntime:
                 fuzzy_suitability=fuzzy_decision.fuzzy_suitability,
                 suitability_tier=fuzzy_decision.suitability_tier,
                 min_suitability_threshold=self.min_suitability_threshold,
+                decision_eligible=sel_eligible,
             )
 
             # Step 4: Execute SR Request via Step 6
@@ -478,6 +480,7 @@ class AdaptiveSRRuntime:
                 rejection_reason="No candidate met feasibility or suitability threshold",
                 fallback_reason=fallback_reason,
                 min_suitability_threshold=self.min_suitability_threshold,
+                decision_eligible=False,
             )
             requested_conf = None
             fallback_edge = self.edge_nodes[0]
@@ -490,8 +493,8 @@ class AdaptiveSRRuntime:
                         "base_representation_id": fallback_rep,
                         "sr_requested": False,
                         "model_id": None,
-                        "scale": 1,
-                        "device": "cpu",
+                        "scale": None,
+                        "device": None,
                     })
                 else:
                     execution_result = self._default_execute_chunk(
@@ -509,8 +512,8 @@ class AdaptiveSRRuntime:
                     "representation_id": fallback_rep,
                     "target_resolution": fallback_rep,
                     "model_id": None,
-                    "scale": 1,
-                    "device": "cpu",
+                    "scale": None,
+                    "device": None,
                 }
                 curr_executed_state = ("native", fallback_edge, fallback_rep)
 
@@ -539,17 +542,30 @@ class AdaptiveSRRuntime:
         stalled = False
         stall_duration = 0.0
 
-        if client_elapsed > buffer_before:
-            stalled = True
-            stall_duration = client_elapsed - buffer_before
-            self.state.stall_count += 1
-            self.state.total_stall_duration += stall_duration
-            buffer_after_depletion = 0.0
+        if delivery_mode == "execution_failed":
+            chunk_delivered = False
+            delivered_chunk_duration = 0.0
+            buffer_after = max(0.0, buffer_before - client_elapsed)
+            stall_duration = max(0.0, client_elapsed - buffer_before)
+            if client_elapsed > buffer_before:
+                stalled = True
+                self.state.stall_count += 1
+                self.state.total_stall_duration += stall_duration
         else:
-            stall_duration = 0.0
-            buffer_after_depletion = buffer_before - client_elapsed
+            chunk_delivered = True
+            delivered_chunk_duration = chunk_duration
+            if client_elapsed > buffer_before:
+                stalled = True
+                stall_duration = client_elapsed - buffer_before
+                self.state.stall_count += 1
+                self.state.total_stall_duration += stall_duration
+                buffer_after_depletion = 0.0
+            else:
+                stall_duration = 0.0
+                buffer_after_depletion = buffer_before - client_elapsed
 
-        buffer_after = buffer_after_depletion + chunk_duration
+            buffer_after = buffer_after_depletion + chunk_duration
+
         self.state.buffer_seconds = buffer_after
 
         # Step 7: Construct Machine-Readable Telemetry Record
@@ -571,8 +587,8 @@ class AdaptiveSRRuntime:
             executed_configuration=executed_conf,
             decision=decision_telemetry,
             timing=TimingTelemetry(
-                request_start_time=request_start_wall,
-                completion_time=time.time(),
+                request_start_unix_timestamp=request_start_wall,
+                completion_unix_timestamp=time.time(),
                 client_elapsed_seconds=client_elapsed,
                 download_transfer_time=download_time,
                 sr_processing_time=sr_time,
@@ -592,6 +608,8 @@ class AdaptiveSRRuntime:
                 buffer_after=buffer_after,
                 stall_count=self.state.stall_count,
                 stall_duration=stall_duration,
+                chunk_delivered=chunk_delivered,
+                delivered_chunk_duration=delivered_chunk_duration,
             ),
             provenance=ProvenanceTelemetry(
                 fps_signal_provenance={

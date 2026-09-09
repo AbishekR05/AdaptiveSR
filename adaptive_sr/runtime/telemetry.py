@@ -43,6 +43,7 @@ class DecisionTelemetry:
     rejection_reason: Optional[str] = None
     fallback_reason: Optional[str] = None
     min_suitability_threshold: float = 35.0
+    decision_eligible: Optional[bool] = True
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -50,8 +51,8 @@ class DecisionTelemetry:
 
 @dataclass
 class TimingTelemetry:
-    request_start_time: float
-    completion_time: float
+    request_start_unix_timestamp: float
+    completion_unix_timestamp: float
     client_elapsed_seconds: float
     download_transfer_time: float
     sr_processing_time: float
@@ -86,6 +87,8 @@ class BufferTelemetry:
     buffer_after: float
     stall_count: int
     stall_duration: float
+    chunk_delivered: bool = True
+    delivered_chunk_duration: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

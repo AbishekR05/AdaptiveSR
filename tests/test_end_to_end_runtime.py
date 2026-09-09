@@ -738,3 +738,74 @@ def test_injected_test_conditions_explicitly_marked():
 
     assert t_inj.is_injected_test_condition is True
     assert "network_bandwidth" in t_inj.injected_fields
+
+
+def test_failed_sr_request_cannot_increase_playback_buffer():
+    """Regression test proving a failed SR request cannot increase the playback buffer by chunk duration."""
+    runtime = AdaptiveSRRuntime(video_id="sample", initial_buffer_seconds=5.0)
+
+    selected_cfg = {
+        "edge_id": "edge_01",
+        "base_representation_id": "360p",
+        "target_resolution": "720p",
+        "model_id": "tinysr",
+        "scale": 2,
+        "device": "cpu",
+    }
+
+    def failing_handler(c):
+        time.sleep(0.05)
+        raise RuntimeError("SR Model execution failed")
+
+    with patch.object(FuzzyAdaptiveDecisionEngine, "evaluate_candidates") as mock_eval:
+        mock_eval.return_value = FuzzyDecisionSignal(
+            decision="selected",
+            selected_candidate=selected_cfg,
+            selected_edge_id="edge_01",
+            selected_representation_id="360p",
+            target_resolution="720p",
+            model_id="tinysr",
+            scale=2,
+            device="cpu",
+            fuzzy_suitability=80.0,
+            suitability_tier="high",
+            min_suitability_threshold=35.0,
+            candidate_evaluations=[],
+            rejected_candidates=[],
+            input_signal_provenance={},
+            rule_inference_metadata={},
+            warnings=[],
+        )
+        runtime.execution_handler = failing_handler
+        telemetry = runtime.process_chunk("0000", chunk_duration=2.0)
+
+        assert telemetry.delivery_mode == "execution_failed"
+        assert telemetry.buffer.chunk_delivered is False
+        assert telemetry.buffer.delivered_chunk_duration == 0.0
+        # Buffer after must be strictly <= buffer_before (depleted by elapsed time, NOT increased by chunk_duration 2.0)
+        assert telemetry.buffer.buffer_after < 5.0
+        assert telemetry.buffer.buffer_after == pytest.approx(5.0 - telemetry.timing.client_elapsed_seconds, abs=0.05)
+        assert runtime.state.buffer_seconds == telemetry.buffer.buffer_after
+
+
+def test_native_fallback_executed_configuration_null_fields():
+    """Verify native fallback executed configuration omits / sets null for SR-specific fields."""
+    runtime = AdaptiveSRRuntime(video_id="sample", min_suitability_threshold=99.0)
+    telemetry = runtime.process_chunk("0000")
+
+    assert telemetry.delivery_mode == "native"
+    exec_cfg = telemetry.executed_configuration
+    assert exec_cfg["representation_id"] == "360p"
+    assert exec_cfg["model_id"] is None
+    assert exec_cfg["scale"] is None
+    assert exec_cfg["device"] is None
+
+
+def test_final_decision_eligible_preserved_in_decision_telemetry():
+    """Verify selected candidate decision_eligible is explicitly preserved in final decision telemetry."""
+    runtime = AdaptiveSRRuntime(video_id="sample")
+    telemetry = runtime.process_chunk("0000")
+
+    assert telemetry.decision.decision == "selected"
+    assert telemetry.decision.decision_eligible is True
+
