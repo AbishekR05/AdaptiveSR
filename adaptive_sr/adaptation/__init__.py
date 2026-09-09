@@ -13,6 +13,11 @@ from adaptive_sr.adaptation.bitrate_adapter import (
     BitrateAdapter,
     BitrateAdaptationSignal,
 )
+from adaptive_sr.adaptation.edge_evaluator import (
+    EdgeResourceEvaluator,
+    EdgeResourceSignal,
+    EdgeResourceState,
+)
 
 __all__ = [
     "FPSAdapter",
@@ -20,4 +25,7 @@ __all__ = [
     "classify_realtime_ratio",
     "BitrateAdapter",
     "BitrateAdaptationSignal",
+    "EdgeResourceEvaluator",
+    "EdgeResourceSignal",
+    "EdgeResourceState",
 ]
