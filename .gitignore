@@ -27,3 +27,7 @@ logs/
 *.mp4
 outputs/
 experiments/
+data/studio_storage/
+scratch_papers.txt
+*.pdf
+

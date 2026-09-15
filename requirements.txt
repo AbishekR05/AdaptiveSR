@@ -14,4 +14,6 @@ onnx
 onnxruntime
 fastapi
 uvicorn
+python-multipart
+imageio-ffmpeg
 

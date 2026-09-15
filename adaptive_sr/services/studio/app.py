@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 
 from adaptive_sr.runtime.orchestrator import AdaptiveSRRuntime
 from adaptive_sr.benchmarking.adapters.registry import get_adapter, list_available_models
+from adaptive_sr.profiling.profile_video import run_profiler, get_file_sha256
 
 logger = logging.getLogger("AdaptiveSRStudio")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -34,9 +35,11 @@ BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = Path("data/studio_storage")
 UPLOADS_DIR = STORAGE_DIR / "uploads"
 OUTPUTS_DIR = STORAGE_DIR / "outputs"
+PROFILING_DIR = STORAGE_DIR / "profiling"
 
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+PROFILING_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="AdaptiveSR Local Studio Demo")
 
@@ -131,15 +134,21 @@ def _create_sample_video(filepath: Path) -> None:
 
         out.write(frame)
 
-    out.release()
-
-
 @app.get("/", response_class=HTMLResponse)
 def get_index():
     index_path = BASE_DIR / "templates" / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=444, detail="Studio index.html template not found")
     with open(index_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/profiler", response_class=HTMLResponse)
+def get_profiler():
+    profiler_path = BASE_DIR / "templates" / "step1_profiler.html"
+    if not profiler_path.exists():
+        profiler_path = BASE_DIR / "templates" / "index.html"
+    with open(profiler_path, "r", encoding="utf-8") as f:
         return f.read()
 
 
@@ -151,6 +160,80 @@ def get_media(folder: str, file_name: str, request: Request):
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Media file not found")
     return FileResponse(filepath, media_type="video/mp4", filename=file_name)
+
+
+@app.get("/media/profiling/{video_id}/{sub_folder}/{file_name}")
+def get_profiling_media(video_id: str, sub_folder: str, file_name: str):
+    filepath = PROFILING_DIR / video_id / sub_folder / file_name
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Profiling media file not found")
+    media_type = "application/json" if file_name.endswith(".json") else "video/mp4"
+    return FileResponse(filepath, media_type=media_type, filename=file_name)
+
+
+@app.post("/api/profile")
+def profile_video_endpoint(payload: Dict[str, Any]):
+    stored_filename = payload.get("stored_filename")
+    video_id = payload.get("video_id")
+    chunk_duration = float(payload.get("chunk_duration", 2.0))
+    temporal_window_s = float(payload.get("temporal_window_s", 0.0333))
+
+    if not stored_filename:
+        raise HTTPException(status_code=400, detail="Missing stored_filename")
+
+    input_path = UPLOADS_DIR / stored_filename
+    if not input_path.exists():
+        raise HTTPException(status_code=404, detail=f"Uploaded input video not found: {stored_filename}")
+
+    if not video_id:
+        video_id = Path(stored_filename).stem
+
+    out_dir = PROFILING_DIR / video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    t_start = time.monotonic()
+    try:
+        profile_path, manifest_path = run_profiler(
+            input_video=str(input_path),
+            output_dir=str(out_dir),
+            chunk_duration=chunk_duration,
+            temporal_window_s=temporal_window_s
+        )
+    except Exception as e:
+        logger.error(f"Failed to run Step 1 profiler: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Step 1 profiling failed: {e}")
+
+    elapsed = round(time.monotonic() - t_start, 3)
+
+    with open(profile_path, "r", encoding="utf-8") as f:
+        content_profile = json.load(f)
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    # Attach preview URLs for chunk files
+    chunks_with_urls = []
+    for chunk in content_profile.get("chunks", []):
+        c_id = chunk.get("chunk_id")
+        filename = f"{video_id}_{c_id}.mp4"
+        chunk_copy = dict(chunk)
+        chunk_copy["url"] = f"/media/profiling/{video_id}/chunks/{filename}"
+        chunks_with_urls.append(chunk_copy)
+
+    content_profile["chunks"] = chunks_with_urls
+
+    return {
+        "status": "success",
+        "video_id": video_id,
+        "elapsed_seconds": elapsed,
+        "file_sha256": manifest.get("source_file_hash"),
+        "content_profile": content_profile,
+        "manifest": manifest,
+        "profile_url": f"/media/profiling/{video_id}/profiles/{video_id}_profile.json",
+        "manifest_url": f"/media/profiling/{video_id}/manifests/{video_id}_manifest.json",
+    }
+
+
 
 
 @app.get("/api/system_status")

@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html class="dark h-full bg-[#0a0d14] text-slate-100" lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <title>AdaptiveSR Studio — Step 1: Video & Content Profiler</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            obsidian: '#0a0d14',
+            surface: {
+              800: '#151b26',
+              900: '#0e131d',
+              700: '#1e2638'
+            },
+            accent: {
+              cyan: '#06b6d4',
+              violet: '#6366f1',
+              emerald: '#10b981',
+              rose: '#f43f5e'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace']
+          }
+        }
+      }
+    };
+  </script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com" rel="preconnect">
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0e131d; }
+    ::-webkit-scrollbar-thumb { background: #252e3f; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3b465c; }
+    .grid-bg-overlay {
+      background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 0);
+      background-size: 24px 24px;
+    }
+    .glass-card {
+      background: rgba(21, 27, 38, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glow-cyan {
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.25);
+    }
+    .glow-violet {
+      box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans antialiased bg-[#090c12] text-slate-200 overflow-x-hidden">
+
+  <!-- Hidden File Input -->
+  <input type="file" id="file-input" accept="video/*" class="hidden">
+
+  <!-- TOP NAVIGATION HEADER -->
+  <header class="h-16 border-b border-slate-800/80 bg-surface-900/90 backdrop-blur-md px-6 flex items-center justify-between shrink-0 z-30 sticky top-0">
+    <div class="flex items-center gap-4">
+      <div class="h-9 w-9 rounded-xl bg-gradient-to-tr from-accent-cyan via-accent-violet to-purple-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+        </svg>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-bold text-lg text-white tracking-wide">AdaptiveSR Studio</h1>
+          <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30">Step 1 Profiler</span>
+        </div>
+        <p class="text-xs text-slate-400">Offline Source-Side Video & Content Feature Extraction Engine</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <a href="/" class="px-3.5 py-1.5 rounded-lg border border-slate-700 bg-surface-800 hover:bg-slate-700/60 text-xs font-medium text-slate-300 transition-all">
+        ← Full Studio Engine
+      </a>
+      <button id="btn-sample-profiler" class="px-3.5 py-1.5 rounded-lg border border-accent-violet/40 bg-accent-violet/10 hover:bg-accent-violet/20 text-xs font-medium text-accent-violet transition-all flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+        </svg>
+        Load Demo Sample Video
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-8 grid-bg-overlay">
+
+    <!-- HERO SECTION & DROPZONE -->
+    <div class="glass-card rounded-2xl p-6 relative overflow-hidden">
+      <div class="absolute -right-20 -top-20 w-80 h-80 bg-accent-cyan/10 rounded-full blur-3xl pointer-events-none"></div>
+      
+      <div class="flex flex-col md:flex-row gap-6 items-start justify-between">
+        <div class="space-y-3 max-w-2xl">
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-xs font-medium text-slate-300">
+            <span class="w-2 h-2 rounded-full bg-accent-emerald animate-pulse"></span>
+            Determinism & Temporal Consistency Guard Active
+          </div>
+          <h2 class="text-2xl font-bold text-white">Step 1 — Video & Content Profiling Audit</h2>
+          <p class="text-sm text-slate-300 leading-relaxed">
+            Upload any source video (<code class="text-accent-cyan font-mono text-xs">30 / 60 / 120 FPS</code>). The profiler segments the video into 
+            keyframe-aligned 2-second MP4 chunks, measures frame-level motion vectors, spatial texture complexity, edge density, and generates an official 
+            JSON profiling manifest.
+          </p>
+        </div>
+
+        <!-- CONFIGURATION CONTROLS -->
+        <div class="w-full md:w-80 bg-surface-900/80 border border-slate-800 rounded-xl p-4 space-y-3 text-xs">
+          <div class="font-semibold text-slate-200 border-b border-slate-800 pb-1.5 flex items-center justify-between">
+            <span>Profiling Parameters</span>
+            <span class="text-accent-cyan font-mono">v1.0.0</span>
+          </div>
+          <div class="space-y-1">
+            <label class="text-slate-400">Target Chunk Duration (seconds)</label>
+            <input type="number" id="input-chunk-duration" value="2.0" step="0.5" min="1.0" max="10.0" class="w-full bg-surface-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-100 font-mono focus:border-accent-cyan focus:outline-none">
+          </div>
+          <div class="space-y-1">
+            <label class="text-slate-400">Temporal Motion Window (seconds)</label>
+            <input type="number" id="input-temporal-window" value="0.0333" step="0.005" min="0.01" max="0.5" class="w-full bg-surface-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-100 font-mono focus:border-accent-cyan focus:outline-none">
+          </div>
+        </div>
+      </div>
+
+      <!-- UPLOAD DROPZONE -->
+      <div id="dropzone" class="mt-6 border-2 border-dashed border-slate-700/80 hover:border-accent-cyan/60 rounded-xl p-8 transition-all bg-surface-900/40 text-center cursor-pointer group">
+        <div class="flex flex-col items-center gap-3">
+          <div class="w-14 h-14 rounded-2xl bg-surface-800 border border-slate-700 group-hover:border-accent-cyan/40 group-hover:bg-accent-cyan/10 flex items-center justify-center transition-all text-accent-cyan">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+            </svg>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-slate-200 group-hover:text-accent-cyan transition-colors">
+              Click to browse or drag and drop your target video file
+            </p>
+            <p class="text-xs text-slate-400 mt-1">MP4, MOV, AVI, MKV (Supports 30, 60, and 120 FPS content)</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATUS LOG / PROGRESS INDICATOR -->
+      <div id="status-container" class="mt-4 hidden bg-surface-900 border border-slate-800 rounded-xl p-4 text-xs font-mono space-y-2">
+        <div class="flex items-center justify-between text-slate-300">
+          <span id="status-text" class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent-cyan animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Processing video and extracting frame metrics...
+          </span>
+          <span id="status-timer" class="text-accent-cyan">0.0s</span>
+        </div>
+        <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+          <div id="status-progress-bar" class="bg-gradient-to-r from-accent-cyan to-accent-violet h-full w-1/3 animate-pulse transition-all duration-300"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROFILING RESULTS DASHBOARD (HIDDEN UNTIL PROFILED) -->
+    <div id="results-dashboard" class="space-y-8 hidden">
+
+      <!-- SECTION 1: VIDEO METADATA CARDS -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <!-- Card 1: Resolution -->
+        <div class="glass-card p-4 rounded-xl space-y-1">
+          <div class="text-xs text-slate-400 uppercase font-medium tracking-wider">Resolution</div>
+          <div id="meta-resolution" class="text-xl font-bold font-mono text-white">1280×720</div>
+          <div id="meta-resolution-sub" class="text-[11px] text-slate-400">720p HD</div>
+        </div>
+        <!-- Card 2: Framerate -->
+        <div class="glass-card p-4 rounded-xl space-y-1 border-l-2 border-l-accent-cyan">
+          <div class="text-xs text-slate-400 uppercase font-medium tracking-wider">Source Framerate</div>
+          <div id="meta-fps" class="text-xl font-bold font-mono text-accent-cyan">30.00 FPS</div>
+          <div id="meta-fps-sub" class="text-[11px] text-emerald-400 font-medium">Valid 30 FPS Target</div>
+        </div>
+        <!-- Card 3: Duration -->
+        <div class="glass-card p-4 rounded-xl space-y-1">
+          <div class="text-xs text-slate-400 uppercase font-medium tracking-wider">Total Duration</div>
+          <div id="meta-duration" class="text-xl font-bold font-mono text-white">4.00s</div>
+          <div id="meta-frames" class="text-[11px] text-slate-400">120 Total Frames</div>
+        </div>
+        <!-- Card 4: Chunks Generated -->
+        <div class="glass-card p-4 rounded-xl space-y-1 border-l-2 border-l-accent-violet">
+          <div class="text-xs text-slate-400 uppercase font-medium tracking-wider">Chunks Generated</div>
+          <div id="meta-chunks-count" class="text-xl font-bold font-mono text-accent-violet">2 Segments</div>
+          <div id="meta-chunk-dur" class="text-[11px] text-slate-400">Keyframe-Aligned ~2.0s</div>
+        </div>
+        <!-- Card 5: SHA256 Integrity -->
+        <div class="glass-card p-4 rounded-xl space-y-1 col-span-2">
+          <div class="text-xs text-slate-400 uppercase font-medium tracking-wider flex items-center justify-between">
+            <span>SHA-256 File Hash</span>
+            <span class="text-[10px] text-accent-emerald font-mono">INTEGRITY VERIFIED</span>
+          </div>
+          <div id="meta-sha256" class="text-xs font-mono text-slate-300 truncate bg-surface-900 px-2 py-1 rounded border border-slate-800">
+            e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+          </div>
+          <div id="meta-filename" class="text-[11px] text-slate-400 truncate">sample.mp4</div>
+        </div>
+      </div>
+
+      <!-- SECTION 2: CHARTS & FEATURE VISUALIZATION -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- CHART 1: MOTION INTENSITY -->
+        <div class="glass-card rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="font-bold text-slate-100 flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-accent-cyan"></span>
+                Motion Intensity per Chunk
+              </h3>
+              <p class="text-xs text-slate-400">Inter-frame motion vector energy across consecutive frames</p>
+            </div>
+            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30">Mean vs P95</span>
+          </div>
+          <div class="h-64 relative">
+            <canvas id="chart-motion"></canvas>
+          </div>
+        </div>
+
+        <!-- CHART 2: SPATIAL COMPLEXITY & TEXTURE -->
+        <div class="glass-card rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="font-bold text-slate-100 flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-accent-violet"></span>
+                Spatial Complexity & Texture Density
+              </h3>
+              <p class="text-xs text-slate-400">High-frequency edge detail and spatial gradient energy</p>
+            </div>
+            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-accent-violet/15 text-accent-violet border border-accent-violet/30">Spatial Energy</span>
+          </div>
+          <div class="h-64 relative">
+            <canvas id="chart-complexity"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SECTION 3: CHUNK INSPECTOR TABLE & PREVIEW PLAYER -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- CHUNK LIST TABLE (2 Cols) -->
+        <div class="glass-card rounded-xl p-5 space-y-4 lg:col-span-2 flex flex-col">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div>
+              <h3 class="font-bold text-slate-100">Deterministic Segment Chunks</h3>
+              <p class="text-xs text-slate-400">Click any chunk row to inspect metrics and play segmented MP4 clip</p>
+            </div>
+            <span id="chunks-badge" class="px-2.5 py-1 rounded-md text-xs font-mono bg-surface-900 text-slate-300 border border-slate-700">
+              0 Chunks Total
+            </span>
+          </div>
+
+          <div class="overflow-x-auto flex-1">
+            <table class="w-full text-xs text-left font-mono">
+              <thead class="bg-surface-900/90 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+                <tr>
+                  <th class="px-3 py-2.5">Chunk ID</th>
+                  <th class="px-3 py-2.5">Time Range</th>
+                  <th class="px-3 py-2.5">Frames</th>
+                  <th class="px-3 py-2.5">Motion</th>
+                  <th class="px-3 py-2.5">Texture</th>
+                  <th class="px-3 py-2.5">Complexity</th>
+                  <th class="px-3 py-2.5">Action</th>
+                </tr>
+              </thead>
+              <tbody id="chunk-table-body" class="divide-y divide-slate-800/60 text-slate-300">
+                <!-- Dynamic Rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- CHUNK MEDIA PLAYER (1 Col) -->
+        <div class="glass-card rounded-xl p-5 space-y-4 flex flex-col">
+          <div class="border-b border-slate-800 pb-3 flex items-center justify-between">
+            <div>
+              <h3 class="font-bold text-slate-100">Chunk Video Inspector</h3>
+              <p id="player-chunk-subtitle" class="text-xs text-accent-cyan font-mono">Select a chunk to play clip</p>
+            </div>
+            <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">MP4 Segment</span>
+          </div>
+
+          <div class="aspect-video bg-black rounded-lg overflow-hidden border border-slate-800 relative group flex items-center justify-center">
+            <video id="chunk-video-player" controls class="w-full h-full object-contain">
+              Your browser does not support the video tag.
+            </video>
+          </div>
+
+          <div id="player-metrics-panel" class="bg-surface-900 border border-slate-800 rounded-lg p-3 text-xs space-y-2 font-mono">
+            <div class="flex justify-between border-b border-slate-800/80 pb-1">
+              <span class="text-slate-400">Chunk ID:</span>
+              <span id="p-chunk-id" class="text-white font-bold">-</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-800/80 pb-1">
+              <span class="text-slate-400">Time Interval:</span>
+              <span id="p-time" class="text-accent-cyan">-</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-800/80 pb-1">
+              <span class="text-slate-400">Frame Range:</span>
+              <span id="p-frames" class="text-accent-violet">-</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-800/80 pb-1">
+              <span class="text-slate-400">Motion Mean (P95):</span>
+              <span id="p-motion" class="text-emerald-400">-</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">Spatial Complexity:</span>
+              <span id="p-complexity" class="text-rose-400">-</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SECTION 4: JSON MANIFEST & PROFILE INSPECTOR -->
+      <div class="glass-card rounded-xl p-5 space-y-4">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="font-bold text-slate-100 flex items-center gap-2">
+              <svg class="w-4 h-4 text-accent-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+              </svg>
+              Step 1 Profiling Artifacts (JSON Manifest & Profile)
+            </h3>
+            <p class="text-xs text-slate-400">Persisted source-side JSON metadata outputs required by downstream decision engine</p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div class="bg-surface-900 p-0.5 rounded-lg border border-slate-800 flex text-xs">
+              <button id="btn-tab-profile" class="px-3 py-1 rounded-md bg-accent-cyan/20 text-accent-cyan font-medium transition-all">
+                Content Profile JSON
+              </button>
+              <button id="btn-tab-manifest" class="px-3 py-1 rounded-md text-slate-400 hover:text-slate-200 font-medium transition-all">
+                Chunk Manifest JSON
+              </button>
+            </div>
+            <a id="btn-download-json" href="#" download class="px-3 py-1.5 rounded-lg bg-accent-violet/20 border border-accent-violet/40 hover:bg-accent-violet/30 text-accent-violet text-xs font-mono font-medium transition-all flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+              </svg>
+              Download Artifact JSON
+            </a>
+          </div>
+        </div>
+
+        <div class="bg-surface-900 rounded-lg p-4 font-mono text-xs overflow-x-auto border border-slate-800 max-h-96 relative">
+          <button id="btn-copy-json" class="absolute top-3 right-3 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 border border-slate-700">
+            Copy JSON
+          </button>
+          <pre id="json-viewer" class="text-emerald-400/90 whitespace-pre-wrap">Select a file to generate profiling artifacts...</pre>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-800/80 bg-surface-900/60 py-4 px-6 text-center text-xs text-slate-500">
+    AdaptiveSR Step 1 Offline Source Profiling Engine • Multi-FPS Support (30/60/120 FPS) • OpenCV & FFmpeg Pipeline
+  </footer>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    // State management
+    let currentStoredFilename = null;
+    let currentVideoId = null;
+    let currentProfileData = null;
+    let currentManifestData = null;
+    let activeTab = 'profile'; // 'profile' or 'manifest'
+    let chartMotion = null;
+    let chartComplexity = null;
+
+    // DOM Elements
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+    const statusContainer = document.getElementById('status-container');
+    const statusText = document.getElementById('status-text');
+    const statusTimer = document.getElementById('status-timer');
+    const statusProgressBar = document.getElementById('status-progress-bar');
+    const resultsDashboard = document.getElementById('results-dashboard');
+    const btnSample = document.getElementById('btn-sample-profiler');
+
+    const inputChunkDuration = document.getElementById('input-chunk-duration');
+    const inputTemporalWindow = document.getElementById('input-temporal-window');
+
+    const btnTabProfile = document.getElementById('btn-tab-profile');
+    const btnTabManifest = document.getElementById('btn-tab-manifest');
+    const btnDownloadJson = document.getElementById('btn-download-json');
+    const btnCopyJson = document.getElementById('btn-copy-json');
+    const jsonViewer = document.getElementById('json-viewer');
+
+    const chunkVideoPlayer = document.getElementById('chunk-video-player');
+
+    // Drag and drop event listeners
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('border-accent-cyan', 'bg-accent-cyan/5');
+    });
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('border-accent-cyan', 'bg-accent-cyan/5');
+    });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('border-accent-cyan', 'bg-accent-cyan/5');
+      if (e.dataTransfer.files.length > 0) {
+        handleFileUpload(e.dataTransfer.files[0]);
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFileUpload(e.target.files[0]);
+      }
+    });
+
+    btnSample.addEventListener('click', async () => {
+      showStatus('Loading sample video demo...', 0);
+      try {
+        const res = await fetch('/api/sample');
+        if (!res.ok) throw new Error('Failed to load sample video');
+        const data = await res.json();
+        currentStoredFilename = data.stored_filename;
+        currentVideoId = data.video_id || 'sample_demo';
+        runStep1Profiler();
+      } catch (err) {
+        showError('Sample load error: ' + err.message);
+      }
+    });
+
+    async function handleFileUpload(file) {
+      showStatus(`Uploading ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)...`, 10);
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Upload failed');
+        }
+        const data = await res.json();
+        currentStoredFilename = data.stored_filename;
+        currentVideoId = data.video_id;
+        runStep1Profiler();
+      } catch (err) {
+        showError('Upload failed: ' + err.message);
+      }
+    }
+
+    async function runStep1Profiler() {
+      if (!currentStoredFilename) return;
+
+      const durationVal = parseFloat(inputChunkDuration.value) || 2.0;
+      const temporalVal = parseFloat(inputTemporalWindow.value) || 0.0333;
+
+      showStatus(`Running Step 1 Profiler (Keyframe segmentation & feature extraction)...`, 40);
+
+      const startTime = Date.now();
+      const timerInterval = setInterval(() => {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        statusTimer.textContent = `${elapsed}s`;
+      }, 100);
+
+      try {
+        const res = await fetch('/api/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stored_filename: currentStoredFilename,
+            video_id: currentVideoId,
+            chunk_duration: durationVal,
+            temporal_window_s: temporalVal
+          })
+        });
+
+        clearInterval(timerInterval);
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Profiling failed');
+        }
+
+        const payload = await res.json();
+        hideStatus();
+        renderResults(payload);
+      } catch (err) {
+        clearInterval(timerInterval);
+        showError('Profiling Error: ' + err.message);
+      }
+    }
+
+    function showStatus(text, progressPct) {
+      statusContainer.classList.remove('hidden');
+      statusText.innerHTML = `
+        <svg class="w-4 h-4 text-accent-cyan animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        ${text}`;
+      statusProgressBar.style.width = `${progressPct}%`;
+    }
+
+    function hideStatus() {
+      statusContainer.classList.add('hidden');
+    }
+
+    function showError(msg) {
+      statusContainer.classList.remove('hidden');
+      statusText.innerHTML = `<span class="text-accent-rose font-bold">❌ ${msg}</span>`;
+      statusProgressBar.style.width = '100%';
+      statusProgressBar.classList.replace('from-accent-cyan', 'from-accent-rose');
+    }
+
+    function renderResults(payload) {
+      resultsDashboard.classList.remove('hidden');
+      resultsDashboard.scrollIntoView({ behavior: 'smooth' });
+
+      currentProfileData = payload.content_profile;
+      currentManifestData = payload.manifest;
+
+      const src = currentProfileData.source;
+      const chunks = currentProfileData.chunks || [];
+
+      // 1. Render Metadata Cards
+      document.getElementById('meta-resolution').textContent = `${src.width}×${src.height}`;
+      document.getElementById('meta-resolution-sub').textContent = src.height >= 1080 ? '1080p FHD' : (src.height >= 720 ? '720p HD' : `${src.height}p SD`);
+
+      const fpsVal = parseFloat(src.fps).toFixed(2);
+      document.getElementById('meta-fps').textContent = `${fpsVal} FPS`;
+      const fpsSub = document.getElementById('meta-fps-sub');
+      if (Math.abs(src.fps - 30) < 1) fpsSub.textContent = 'Standard 30 FPS';
+      else if (Math.abs(src.fps - 60) < 1) fpsSub.textContent = 'High Framerate 60 FPS';
+      else if (Math.abs(src.fps - 120) < 1) fpsSub.textContent = 'Ultra HFR 120 FPS';
+      else fpsSub.textContent = `Custom ${fpsVal} FPS`;
+
+      document.getElementById('meta-duration').textContent = `${parseFloat(src.duration_seconds).toFixed(2)}s`;
+      document.getElementById('meta-frames').textContent = `${src.frame_count} Total Frames`;
+
+      document.getElementById('meta-chunks-count').textContent = `${chunks.length} Segments`;
+      document.getElementById('meta-chunk-dur').textContent = `Target ~${currentProfileData.profiling_config.target_chunk_duration_seconds}s`;
+
+      document.getElementById('meta-sha256').textContent = payload.file_sha256 || 'N/A';
+      document.getElementById('meta-filename').textContent = src.filename || currentStoredFilename;
+
+      document.getElementById('chunks-badge').textContent = `${chunks.length} Chunks Generated`;
+
+      // 2. Render Charts
+      renderCharts(chunks);
+
+      // 3. Render Table
+      renderTable(chunks);
+
+      // 4. Select First Chunk in Player
+      if (chunks.length > 0) {
+        selectChunk(chunks[0]);
+      }
+
+      // 5. Render JSON Inspector
+      updateJsonViewer();
+    }
+
+    function renderCharts(chunks) {
+      const labels = chunks.map(c => `Chunk ${c.chunk_id}`);
+      const motionMean = chunks.map(c => ((c.metrics && c.metrics.motion) ? c.metrics.motion.mean : (c.motion ? c.motion.mean : 0)).toFixed(2));
+      const motionP95 = chunks.map(c => ((c.metrics && c.metrics.motion) ? c.metrics.motion.p95 : (c.motion ? c.motion.p95 : 0)).toFixed(2));
+      const textureMean = chunks.map(c => ((c.metrics && c.metrics.texture_density) ? c.metrics.texture_density.mean : (c.texture_density ? c.texture_density.mean : 0)).toFixed(2));
+      const spatialComplexity = chunks.map(c => ((c.metrics && c.metrics.spatial_complexity) ? c.metrics.spatial_complexity.mean : (c.spatial_complexity ? c.spatial_complexity.mean : 0)).toFixed(2));
+
+      // Destroy old charts if exist
+      if (chartMotion) chartMotion.destroy();
+      if (chartComplexity) chartComplexity.destroy();
+
+      // Chart 1: Motion
+      const ctxMotion = document.getElementById('chart-motion').getContext('2d');
+      chartMotion = new Chart(ctxMotion, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Motion Mean',
+              data: motionMean,
+              borderColor: '#06b6d4',
+              backgroundColor: 'rgba(6, 182, 212, 0.1)',
+              borderWidth: 2.5,
+              tension: 0.3,
+              fill: true
+            },
+            {
+              label: 'Motion P95 Peak',
+              data: motionP95,
+              borderColor: '#f43f5e',
+              borderDash: [4, 4],
+              borderWidth: 1.5,
+              tension: 0.3,
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 } } }
+          },
+          scales: {
+            x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b' } },
+            y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b' }, title: { display: true, text: 'Motion Energy', color: '#64748b' } }
+          }
+        }
+      });
+
+      // Chart 2: Spatial Complexity & Texture
+      const ctxComplexity = document.getElementById('chart-complexity').getContext('2d');
+      chartComplexity = new Chart(ctxComplexity, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Texture Density',
+              data: textureMean,
+              backgroundColor: 'rgba(99, 102, 241, 0.7)',
+              borderRadius: 6
+            },
+            {
+              label: 'Spatial Complexity',
+              data: spatialComplexity,
+              backgroundColor: 'rgba(16, 185, 129, 0.7)',
+              borderRadius: 6
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 } } }
+          },
+          scales: {
+            x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b' } },
+            y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b' }, title: { display: true, text: 'Energy Score', color: '#64748b' } }
+          }
+        }
+      });
+    }
+
+    function renderTable(chunks) {
+      const tbody = document.getElementById('chunk-table-body');
+      tbody.innerHTML = '';
+
+      chunks.forEach((chunk) => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-surface-800/80 cursor-pointer transition-colors border-b border-slate-800/40';
+        tr.onclick = () => selectChunk(chunk);
+
+        const m = chunk.metrics || chunk;
+        const motionVal = (m.motion && m.motion.mean !== undefined) ? m.motion.mean.toFixed(2) : '0.00';
+        const textureVal = (m.texture_density && m.texture_density.mean !== undefined) ? m.texture_density.mean.toFixed(2) : '0.00';
+        const complexityVal = (m.spatial_complexity && m.spatial_complexity.mean !== undefined) ? m.spatial_complexity.mean.toFixed(2) : '0.00';
+
+        const frameStart = chunk.start_frame !== undefined ? chunk.start_frame : chunk.frame_start;
+        const frameEnd = chunk.end_frame !== undefined ? chunk.end_frame : chunk.frame_end;
+
+        tr.innerHTML = `
+          <td class="px-3 py-2.5 font-bold text-accent-cyan">#${chunk.chunk_id}</td>
+          <td class="px-3 py-2.5 text-slate-300">${chunk.start_time_seconds.toFixed(2)}s - ${chunk.end_time_seconds.toFixed(2)}s</td>
+          <td class="px-3 py-2.5 text-slate-400">[${frameStart} - ${frameEnd}] (${chunk.frame_count})</td>
+          <td class="px-3 py-2.5 font-semibold text-emerald-400">${motionVal}</td>
+          <td class="px-3 py-2.5 font-semibold text-accent-violet">${textureVal}</td>
+          <td class="px-3 py-2.5 font-semibold text-amber-400">${complexityVal}</td>
+          <td class="px-3 py-2.5">
+            <button class="px-2 py-1 rounded bg-accent-cyan/15 hover:bg-accent-cyan/30 text-accent-cyan border border-accent-cyan/30 text-[10px] font-sans transition-all">
+              Inspect & Play
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function selectChunk(chunk) {
+      const m = chunk.metrics || chunk;
+      const motionMean = (m.motion && m.motion.mean !== undefined) ? m.motion.mean.toFixed(2) : '0.00';
+      const motionP95 = (m.motion && m.motion.p95 !== undefined) ? m.motion.p95.toFixed(2) : '0.00';
+      const textureMean = (m.texture_density && m.texture_density.mean !== undefined) ? m.texture_density.mean.toFixed(2) : '0.00';
+      const complexityMean = (m.spatial_complexity && m.spatial_complexity.mean !== undefined) ? m.spatial_complexity.mean.toFixed(2) : '0.00';
+
+      const frameStart = chunk.start_frame !== undefined ? chunk.start_frame : chunk.frame_start;
+      const frameEnd = chunk.end_frame !== undefined ? chunk.end_frame : chunk.frame_end;
+
+      document.getElementById('player-chunk-subtitle').textContent = `Inspecting Chunk #${chunk.chunk_id}`;
+      document.getElementById('p-chunk-id').textContent = `#${chunk.chunk_id}`;
+      document.getElementById('p-time').textContent = `${chunk.start_time_seconds.toFixed(2)}s – ${chunk.end_time_seconds.toFixed(2)}s (${chunk.duration_seconds.toFixed(2)}s)`;
+      document.getElementById('p-frames').textContent = `Frames [${frameStart} – ${frameEnd}] (${chunk.frame_count} frames)`;
+      document.getElementById('p-motion').textContent = `${motionMean} (P95: ${motionP95})`;
+      document.getElementById('p-complexity').textContent = `${complexityMean} (Texture: ${textureMean})`;
+
+      if (chunk.url) {
+        chunkVideoPlayer.src = chunk.url;
+        chunkVideoPlayer.load();
+      }
+    }
+
+    btnTabProfile.addEventListener('click', () => {
+      activeTab = 'profile';
+      btnTabProfile.className = 'px-3 py-1 rounded-md bg-accent-cyan/20 text-accent-cyan font-medium transition-all';
+      btnTabManifest.className = 'px-3 py-1 rounded-md text-slate-400 hover:text-slate-200 font-medium transition-all';
+      updateJsonViewer();
+    });
+
+    btnTabManifest.addEventListener('click', () => {
+      activeTab = 'manifest';
+      btnTabManifest.className = 'px-3 py-1 rounded-md bg-accent-violet/20 text-accent-violet font-medium transition-all';
+      btnTabProfile.className = 'px-3 py-1 rounded-md text-slate-400 hover:text-slate-200 font-medium transition-all';
+      updateJsonViewer();
+    });
+
+    function updateJsonViewer() {
+      const data = activeTab === 'profile' ? currentProfileData : currentManifestData;
+      if (!data) {
+        jsonViewer.textContent = 'No artifact generated yet.';
+        return;
+      }
+      jsonViewer.textContent = JSON.stringify(data, null, 2);
+
+      // Download link setup
+      const jsonStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+      btnDownloadJson.setAttribute("href", jsonStr);
+      btnDownloadJson.setAttribute("download", activeTab === 'profile' ? `${currentVideoId}_profile.json` : `${currentVideoId}_manifest.json`);
+    }
+
+    btnCopyJson.addEventListener('click', () => {
+      const text = jsonViewer.textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        btnCopyJson.textContent = 'Copied!';
+        setTimeout(() => btnCopyJson.textContent = 'Copy JSON', 2000);
+      });
+    });
+  </script>
+</body>
+</html>

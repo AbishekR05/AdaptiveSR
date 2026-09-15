@@ -164,3 +164,51 @@ def test_media_streaming_endpoint(client, sample_mp4):
     media_resp = client.get(up_data["url"])
     assert media_resp.status_code == 200
     assert media_resp.headers["content-type"] == "video/mp4"
+
+
+def test_profiler_page_endpoint(client):
+    response = client.get("/profiler")
+    assert response.status_code == 200
+    assert "Step 1" in response.text
+    assert "Profiler" in response.text
+
+
+def test_profiler_api_endpoint(client, sample_mp4):
+    # Upload video first
+    with open(sample_mp4, "rb") as f:
+        up_resp = client.post(
+            "/api/upload",
+            files={"file": ("profile_input.mp4", f, "video/mp4")}
+        )
+    assert up_resp.status_code == 200
+    up_data = up_resp.json()
+
+    # Call /api/profile endpoint
+    prof_resp = client.post(
+        "/api/profile",
+        json={
+            "stored_filename": up_data["stored_filename"],
+            "video_id": "test_profile_vid",
+            "chunk_duration": 2.0,
+            "temporal_window_s": 0.0333
+        }
+    )
+    assert prof_resp.status_code == 200
+    res = prof_resp.json()
+
+    assert res["status"] == "success"
+    assert res["video_id"] == "test_profile_vid"
+    assert "file_sha256" in res
+    assert "content_profile" in res
+    assert "manifest" in res
+
+    profile = res["content_profile"]
+    assert profile["schema_version"] == "1.0.0"
+    assert profile["source"]["fps"] == 30.0
+    assert len(profile["chunks"]) > 0
+
+    chunk0 = profile["chunks"][0]
+    assert "motion" in chunk0
+    assert "texture_density" in chunk0
+    assert "spatial_complexity" in chunk0
+    assert "url" in chunk0
