@@ -51,7 +51,7 @@ def infer(frame_bgr: np.ndarray, device: str = "cpu", scale: int = 2) -> np.ndar
     # 3. Postprocess: squeeze batch, transpose back to HWC (H, W, 3), convert to uint8, RGB -> BGR
     output_tensor = np.squeeze(output_tensor, axis=0)
     output_tensor = np.transpose(output_tensor, (1, 2, 0))
-    output_np = np.clip(output_tensor * 255.0, 0, 255).astype(np.uint8)
+    output_np = np.ascontiguousarray(np.clip(output_tensor * 255.0, 0, 255).astype(np.uint8))
     enhanced_frame_bgr = cv2.cvtColor(output_np, cv2.COLOR_RGB2BGR)
     
     return enhanced_frame_bgr
